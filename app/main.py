@@ -22,7 +22,7 @@ from app import schemas
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 from app.auth import oauth2_scheme, SECRET_KEY, ALGORITHM 
-
+from fastapi import BackgroundTasks
 from fastapi import Form
 from fastapi import Query
 from typing import List
@@ -178,7 +178,7 @@ async def on_startup():
     
 #     return new_user
 @app.post("/register", response_model=schemas.UnifiedLoginResponse)
-async def register(user: schemas.UserCreate, db: AsyncSession = Depends(database.get_db)):
+async def register(user: schemas.UserCreate, background_tasks: BackgroundTasks, db: AsyncSession = Depends(database.get_db)):
     existing_user = await auth.get_user_by_email(db, user.email)
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -200,8 +200,10 @@ async def register(user: schemas.UserCreate, db: AsyncSession = Depends(database
     await db.commit()
     await db.refresh(new_user)
     
+
     # Send OTP email
-    await send_otp_email(new_user.email, otp)
+    background_tasks.add_task(send_otp_email, new_user.email, otp)
+
     
     # Create tokens
     access_token = auth.create_access_token(data={"sub": new_user.email, "role": new_user.role})
