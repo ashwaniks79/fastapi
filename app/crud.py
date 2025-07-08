@@ -8,7 +8,7 @@ from .auth import get_password_hash
 from typing import Union
 
 
-async def create_user(db: AsyncSession, user: Union[schemas.UserCreate, schemas.CreateUserByAdmin], role: str = "customer"):
+async def create_user(db: AsyncSession, user: Union[schemas.UserCreate, schemas.CreateUserByAdmin], user_unique_id: str, role: str = "customer"):
     hashed_password = await get_password_hash(user.password)
     db_user = models.User(
         username=user.username,
@@ -22,6 +22,7 @@ async def create_user(db: AsyncSession, user: Union[schemas.UserCreate, schemas.
         timezone=user.timezone,
         subscription_plan=user.subscription_plan,
         role=role,
+        user_unique_id=user_unique_id
     )
     db.add(db_user)
     await db.commit()

@@ -7,7 +7,7 @@ from .models import User, Admin
 from typing import Union, TYPE_CHECKING
 from typing import Annotated
 import datetime  
-
+from typing import List
 import re
 
 class UserCreate(BaseModel):
@@ -51,6 +51,7 @@ class UserOut(BaseModel):
     permissions: list[str] = ["read"]
     otp_verified: bool = False  
     otp_attempts: int = 0  
+    user_unique_id: str 
 
 
     class Config:
@@ -195,3 +196,60 @@ class OTPCreate(BaseModel):
 class OTPVerify(BaseModel):
     email: EmailStr
     otp: str
+
+class FileData(BaseModel):
+    filename: str
+    content_type: str
+    saved_path: str
+    content_base64: str
+
+class CompanyInfoResponse(BaseModel):
+    company_name: str
+    uploaded_files: List[FileData]
+
+
+##########company information page########################
+
+class CompanyInformationBase(BaseModel):
+    company_name: str
+    business_reg_number: str
+    industry_type: str
+    other_industry: Optional[str] = None
+    num_employees: Optional[int] = None
+    company_website: Optional[str] = None
+    business_phone: str
+    business_email: EmailStr
+    address_street: str
+    address_city: str
+    address_state: str
+    address_postcode: str
+    address_country: str
+    terms_accepted: bool
+
+    @validator('company_website')
+    def validate_website(cls, v):
+        if v and not v.startswith(('http://', 'https://')):
+            raise ValueError('Website must start with http:// or https://')
+        return v
+
+class CompanyInformationCreate(CompanyInformationBase):
+    pass
+
+class CompanyInformationResponse(CompanyInformationBase):
+    id: int
+    user_id: int
+    company_logo_path: Optional[str] = None
+    # terms_accepted: bool
+    registration_doc_path: str
+    additional_files_paths: Optional[List[str]] = None
+    created_at: datetime.datetime
+    updated_at: Optional[datetime.datetime] = None
+
+    class Config:
+        orm_mode = True
+####################################Delete Account#############
+
+
+class DeleteAccountRequest(BaseModel):
+    email: EmailStr
+    password: str

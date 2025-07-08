@@ -4,7 +4,7 @@ version: "3.9"
 services:
   db:
     image: postgres:14
-    restart: always
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -12,7 +12,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "5433:5432"  
 
   web:
     build: .
@@ -24,7 +24,7 @@ services:
       - db
     env_file:
       - .env
-
+    restart: unless-stopped
   adminer:
     image: adminer
     ports:
@@ -34,3 +34,7 @@ services:
 
 volumes:
   postgres_data:
+    driver: local
+    name: my_app_postgres_dat
+    external: false 
+    

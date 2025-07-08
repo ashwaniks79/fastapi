@@ -16,6 +16,8 @@ from .database import get_db
 import smtplib
 from email.mime.text import MIMEText
 from .models import User, Admin 
+from sqlalchemy import select
+
 load_dotenv()
 
 ROLE_MODEL_MAP = {
@@ -32,7 +34,7 @@ ROLE_UPDATE_MAP = {
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = os.getenv("ALGORITHM")
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
+ACCESS_TOKEN_EXPIRE_DAYS = int(os.getenv("ACCESS_TOKEN_EXPIRE_DAYS", 1))
 EMAIL_SECRET = os.getenv("EMAIL_VERIFICATION_SECRET")
 EMAIL_EXPIRE_MINUTES = int(os.getenv("EMAIL_VERIFICATION_EXPIRE_MINUTES", 30))
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
@@ -40,7 +42,7 @@ EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD")
 OTP_SECRET = os.getenv("OTP_SECRET")
 OTP_EXPIRE_MINUTES = int(os.getenv("OTP_EXPIRE_MINUTES", 2))
 OTP_ATTEMPTS_LIMIT = int(os.getenv("OTP_ATTEMPTS_LIMIT", 3))
-
+OTP_EXPIRE_FOR_RESET_MINUTES = 5 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
@@ -95,7 +97,7 @@ async def authenticate_user_by_model(db: AsyncSession, model, username_or_email:
 
 def create_access_token(data: dict, expires_delta: timedelta = None):
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = datetime.utcnow() + (expires_delta or timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -105,6 +107,12 @@ def create_refresh_token(data: dict, expires_delta: timedelta = None):
     to_encode.update({"exp": expire, "scope": "refresh_token"})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
+def decode_access_token(token: str):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except JWTError as e:
+        raise JWTError("Token is invalid or expired") from e
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
@@ -142,29 +150,4 @@ async def get_current_admin(
         raise HTTPException(status_code=403, detail="Not authorized as admin")
     return current_user
 
-
-
-# def create_email_verification_token(email: str) -> str:
-#     expire = datetime.utcnow() + timedelta(minutes=EMAIL_EXPIRE_MINUTES)
-#     payload = {"sub": email, "exp": expire}
-#     return jwt.encode(payload, EMAIL_SECRET, algorithm="HS256")
-
-
-# def verify_email_token(token: str) -> str:
-#     try:
-#         payload = jwt.decode(token, EMAIL_SECRET, algorithms=["HS256"])
-#         return payload.get("sub")
-#     except JWTError:
-#         raise ValueError("Invalid or expired token")
-
-
-# async def send_verification_email(email: str, token: str):
-#     msg = MIMEText(f"Click the link to verify your email:\n\nhttp://localhost:8000/verify-email?token={token}")
-#     msg["Subject"] = "Email Verification"
-#     msg["From"] = EMAIL_SENDER
-#     msg["To"] = email
-
-#     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-#         server.login(EMAIL_SENDER, EMAIL_APP_PASSWORD)
-#         server.sendmail(EMAIL_SENDER, [email], msg.as_string())
 
