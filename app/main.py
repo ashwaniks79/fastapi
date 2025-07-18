@@ -281,7 +281,7 @@ We're excited to have you join our platform! You've taken the first step toward 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━<br><br>
 🔧 <strong>What Happens Next?</strong><br><br>
 To activate your portal, please complete your Company Setup:<br><br>
-👉 <a href="http://170.64.163.105:3001/completeprofile/companyinformationpage?uid={id}">Complete Your Company Setup</a><br><br>
+👉 <a href="http://localhost:3000/completeprofile/companyinformationpage?uid={id}">Complete Your Company Setup</a><br><br>
 This is where you'll:<br>
 •  Describe your business and upload documents<br>
 •  Select the Managers (modules) you want to enable<br>
@@ -293,7 +293,7 @@ Here's how we keep your portal secure:<br>
 •  We do not share, resell, or transmit your data to any third party<br>
 •  All business data stays within your company instance<br>
 •  When you delete data, it's permanently erased and cannot be recovered<br>
-•  You can review our full <a href="http://170.64.163.105:3001/legal/datasecurity">Data Security & Privacy Commitment</a><br><br>
+•  You can review our full <a href="http://localhost:3000/legal/datasecurity">Data Security & Privacy Commitment</a><br><br>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━<br><br>
 📄 <strong>User Acknowledgement & Disclaimer</strong><br><br>
 To proceed, please review and accept the following during onboarding:<br>
@@ -303,7 +303,7 @@ To proceed, please review and accept the following during onboarding:<br>
    ◦  Include scams, malicious links, viruses, or trojans<br>
    ◦  Harm the reputation or integrity of Eredox Pty Ltd or its users<br>
 •  You understand that deleted data is not recoverable unless re-submitted<br><br>
-📄 <a href="http://170.64.163.105:3001/legal/termsofuse">Review our Terms of Use & Legal Policy</a><br><br>
+📄 <a href="http://localhost:3000/legal/termsofuse">Review our Terms of Use & Legal Policy</a><br><br>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━<br><br>
 💬 <strong>Need Help?</strong><br>
 Contact us anytime or simply reply to this email. We're here to support you.<br><br>
@@ -328,6 +328,8 @@ Warm regards,<br>
 
     return {"message": f"Welcome email sent to {first_name}"}
 
+
+    
     # msg = MIMEText(welcome_message, 'html')
     # msg["Subject"] = "Welcome to EredoxPro - Let's Set Up Your Business Portal"
     # msg["From"] = auth.EMAIL_SENDER
@@ -1005,7 +1007,7 @@ async def send_password_link_email(
         raise HTTPException(status_code=404, detail="User not found")
 
     # Use static frontend reset page + user_id
-    reset_link = f"http://170.64.163.105:3001/forget-password?uid={user.id}"
+    reset_link = f"http://localhost:3000/forget-password?uid={user.id}"
     background_tasks.add_task(send_forget_password_link_email, user.email, user.first_name, reset_link)
 
     return {"message": f"Password reset link sent to {email}"}
