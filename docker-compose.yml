@@ -1,0 +1,84 @@
+
+# version: "3.9"
+
+# services:
+#   db_fastapi:
+#     image: postgres:14
+#     restart: always
+#     environment:
+#       POSTGRES_USER: postgres
+#       POSTGRES_PASSWORD: postgres
+#       POSTGRES_DB: postgres
+      
+#     volumes:
+#       - postgres_data:/var/lib/postgresql/data
+#     ports:
+#       - "5432:5432"  
+
+#   web:
+#     build: .
+#     volumes:
+#       - .:/app
+#     ports:
+#       - "8002:8000"
+#     depends_on:
+#       - db_fastapi
+#     env_file:
+#       - .env
+#     restart: always
+#   adminer:
+#     image: adminer
+#     ports:
+#       - "8081:8080"
+
+
+# volumes:
+#   postgres_data:
+#     external: false 
+###########new yml file##################
+
+version: "3.9"
+
+services:
+  db_fastapi:
+    image: postgres:14
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - odoo-net
+
+  web:
+    build: .
+    volumes:
+      - .:/app
+    ports:
+      - "8002:8000"
+    depends_on:
+      - db_fastapi
+    env_file:
+      - .env
+    restart: always
+    networks:
+      - odoo-net
+
+  adminer:
+    image: adminer
+    ports:
+      - "8081:8080"
+    networks:
+      - odoo-net
+
+volumes:
+  postgres_data:
+
+networks:
+  odoo-net:
+    external: true
+    name: odoo-net
