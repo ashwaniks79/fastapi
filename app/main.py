@@ -665,14 +665,14 @@ async def get_company_name_by_unique_id(
 #########we can fill all company information by company_information_page
 @app.post("/user/company_information_page", response_model=schemas.CompanyInformationResponse)
 async def create_company_information(
-    user_id: str = Form(...),  # ✅ NEW: Accept id as input
+    user_id: str = Form(...),
     business_reg_number: str = Form(...),
     industry_type: str = Form(...),
     other_industry: Optional[str] = Form(None),
     num_employees: Optional[int] = Form(None),
     company_website: Optional[str] = Form(None),
     business_phone: str = Form(...),
-    business_email: EmailStr = Form(...),
+    business_email: schemas.EmailStr = Form(...),
     address_street: str = Form(...),
     address_city: str = Form(...),
     address_state: str = Form(...),
@@ -684,114 +684,120 @@ async def create_company_information(
     additional_files: Optional[List[UploadFile]] = File(None),
     db: AsyncSession = Depends(get_db)
 ):
-    # ✅ NEW: Fetch user from user_id
-    result = await db.execute(select(models.User).where(models.User.id == user_id))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    if user.role == "admin":
-        return {"detail": "Admin does not require company information page"}
-    if not user.otp_verified:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Please verify your email with OTP before submitting company information"
-        )
+    try:
+        # Fetch user
+        result = await db.execute(select(models.User).where(models.User.id == user_id))
+        user = result.scalar_one_or_none()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
 
-    # Validate terms acceptance
-    if not terms_accepted:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="You must accept the terms and conditions"
-        )
+        if user.role == "admin":
+            return {"detail": "Admin does not require company information page"}
 
-    # Check if user already has company info
-    existing_info = await db.execute(
-        select(models.CompanyInformationPageDetails)
-        .where(models.CompanyInformationPageDetails.user_id == user.id)
-    )
-    if existing_info.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Company information already submitted"
-        )
+        if not user.otp_verified:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Please verify your email with OTP before submitting company information"
+            )
 
-    # Process file uploads
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-# Validate company_logo if provided (optional)
-    company_logo_url = None  # initialize here
-    if company_logo:
-        if not allowed_file(company_logo.filename, COMPANY_LOGO_EXTENSIONS):
+        if not terms_accepted:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Company logo file type is not supported. Allowed: PNG, JPG, JPEG, GIF, BMP, TIFF, SVG"
+                detail="You must accept the terms and conditions"
             )
-        logo_filename = f"logo_{user.id}_{company_logo.filename}"
-        company_logo_url = upload_file_to_spaces(
-            file_obj=await company_logo.read(),
-            filename=logo_filename,
-            content_type=company_logo.content_type
-    )
 
-# Validate registration_doc (required)
-    if not allowed_file(registration_doc.filename, REGISTRATION_DOC_EXTENSIONS):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Registration document file type is not supported. Allowed: PDF, JPG, JPEG, PNG"
-    )
-    regdoc_filename = f"regdoc_{user.id}_{registration_doc.filename}"
-    registration_doc_url = upload_file_to_spaces(
-        file_obj=await registration_doc.read(),
-        filename=regdoc_filename,
-        content_type=registration_doc.content_type
-)
+        # Check if already submitted
+        existing_info = await db.execute(
+            select(models.CompanyInformationPageDetails).where(
+                models.CompanyInformationPageDetails.user_id == user.id
+            )
+        )
+        if existing_info.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Company information already submitted"
+            )
 
-# Validate additional_files (optional multiple)
-    additional_files_urls = []
-    if additional_files:
-        for file in additional_files:
-            if not allowed_file(file.filename, ADDITIONAL_FILES_EXTENSIONS):
+        # Create upload dir
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+        # Handle company logo (optional)
+        company_logo_url = None
+        if company_logo:
+            if not allowed_file(company_logo.filename, COMPANY_LOGO_EXTENSIONS):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Additional file '{file.filename}' type is not supported. Allowed: PDF, DOC, DOCX, XLSX, JPG, JPEG"
+                    detail="Company logo file type is not supported. Allowed: PNG, JPG, JPEG, GIF, BMP, TIFF, SVG"
                 )
-            additional_filename = f"additional_{user.id}_{file.filename}"
-            url = upload_file_to_spaces(
-                file_obj=await file.read(),
-                filename=additional_filename,
-                content_type=file.content_type
+            logo_filename = f"logo_{user.id}_{company_logo.filename}"
+            company_logo_url = upload_file_to_spaces(
+                file_obj=await company_logo.read(),
+                filename=logo_filename,
+                content_type=company_logo.content_type
             )
-            additional_files_urls.append(url)
 
+        # Handle registration doc (required)
+        if not allowed_file(registration_doc.filename, REGISTRATION_DOC_EXTENSIONS):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Registration document file type is not supported. Allowed: PDF, JPG, JPEG, PNG"
+            )
+        regdoc_filename = f"regdoc_{user.id}_{registration_doc.filename}"
+        registration_doc_url = upload_file_to_spaces(
+            file_obj=await registration_doc.read(),
+            filename=regdoc_filename,
+            content_type=registration_doc.content_type
+        )
 
-    # ✅ Use company_name from the user fetched by unique_id
-    company_info = models.CompanyInformationPageDetails(
-        user_id=user.id,
-        company_name=user.company_name,
-        business_reg_number=business_reg_number,
-        industry_type=industry_type,
-        other_industry=other_industry,
-        num_employees=num_employees,
-        company_website=company_website,
-        business_phone=business_phone,
-        business_email=business_email,
-        address_street=address_street,
-        address_city=address_city,
-        address_state=address_state,
-        address_postcode=address_postcode,
-        address_country=address_country,
-        terms_accepted=terms_accepted,
-        company_logo_path=company_logo_url,
-        registration_doc_path=registration_doc_url,
-        additional_files_paths=additional_files_urls
-    )
+        # Handle additional files (optional)
+        additional_files_urls = []
+        if additional_files:
+            for file in additional_files:
+                if not allowed_file(file.filename, ADDITIONAL_FILES_EXTENSIONS):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Additional file '{file.filename}' type is not supported. Allowed: PDF, DOC, DOCX, XLSX, JPG, JPEG"
+                    )
+                additional_filename = f"additional_{user.id}_{file.filename}"
+                url = upload_file_to_spaces(
+                    file_obj=await file.read(),
+                    filename=additional_filename,
+                    content_type=file.content_type
+                )
+                additional_files_urls.append(url)
 
-    db.add(company_info)
-    await db.commit()
-    await db.refresh(company_info)
+        # Create and save model instance
+        company_info = models.CompanyInformationPageDetails(
+            user_id=user.id,
+            company_name=user.company_name,
+            business_reg_number=business_reg_number,
+            industry_type=industry_type,
+            other_industry=other_industry,
+            num_employees=num_employees,
+            company_website=company_website,
+            business_phone=business_phone,
+            business_email=business_email,
+            address_street=address_street,
+            address_city=address_city,
+            address_state=address_state,
+            address_postcode=address_postcode,
+            address_country=address_country,
+            terms_accepted=terms_accepted,
+            company_logo_path=company_logo_url,
+            registration_doc_path=registration_doc_url,
+            additional_files_paths=additional_files_urls
+        )
 
-    return company_info
+        db.add(company_info)
+        await db.commit()
+        await db.refresh(company_info)
 
+        # ✅ Return a valid response_model to prevent 500 error
+        return schemas.CompanyInformationResponse.from_orm(company_info)
+
+    except Exception as e:
+        print(f"Internal Server Error: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
 ########check user filled company information page
 @app.get("/check-company-info-status", response_model=dict)
