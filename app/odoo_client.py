@@ -14,7 +14,6 @@
 #         password=os.getenv("ODOO_PASSWORD", "odoo")
 #     )
 #     return odoo
-
 import odoorpc
 import os
 

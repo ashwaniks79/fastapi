@@ -27,3 +27,6 @@ starlette
 odoorpc
 requests
 boto3
+stripe
+alembic
+psycopg2-binary

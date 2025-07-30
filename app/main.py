@@ -1,6 +1,7 @@
 
 
 #import statements all in one 
+from app.constants import TIER_PRICING
 from fastapi import Depends, Header, FastAPI, HTTPException, status, Request, BackgroundTasks, Body, File, UploadFile, Query
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -16,7 +17,8 @@ import smtplib
 import uuid
 import logging
 import random
-from app.odoo_services import create_odoo_user
+from app.routes import payment, webhook
+import traceback
 # from app.odoo_connector import get_odoo_connection
 import json
 from dotenv import load_dotenv
@@ -44,6 +46,7 @@ import os
 import logging
 import boto3
 from dotenv import load_dotenv
+from app.odoo_services import create_odoo_user
 from app.schemas import SubscriptionResponse
 import requests
 from fastapi import HTTPException
@@ -54,9 +57,7 @@ import requests
 from fastapi import HTTPException
 from app import auth
 from app.odoo_routes import router as odoo_router
-
-
-
+from fastapi.concurrency import run_in_threadpool
 #app start
 
 # Load environment variables
@@ -64,11 +65,10 @@ load_dotenv()
 
 app = FastAPI()
 # main.py
-
 # Include the Odoo test endpoint
 app.include_router(odoo_router)
-
-
+app.include_router(payment.router, prefix="/api")
+app.include_router(webhook.router, prefix="/api")
 #logs 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -88,25 +88,6 @@ ADDITIONAL_FILES_EXTENSIONS = {".pdf", ".doc", ".docx", ".xlsx", ".jpg", ".jpeg"
 def allowed_file(filename: str, allowed_extensions: set) -> bool:
     ext = os.path.splitext(filename.lower())[1]
     return ext in allowed_extensions
-################Subscriptions Tier and price####################
-TIER_PRICING = {
-    "free": 0.00,
-    "silver": 29.99,
-    "gold": 49.99
-}
-
-# Coupon discount values
-COUPONS = {
-    "DISCOUNT50": 0.50,
-    "FREETRIAL": 1.00
-}
-
-# Tier-specific features
-TIER_FEATURES = {
-    "free": ['Access to 3 Basic Agents', 'Limited Usage of Tools'],
-    "silver": ['Access to All Standard Agents', 'Limited Media/Marketing Tools'],
-    "gold": ['Full Access to 50+ Agents', 'Includes Document, Vision, Marketing Tools']
-}
 
 ######upload route for digital ocean###########
 # Create boto3 client for DigitalOcean Spaces
@@ -120,14 +101,17 @@ client = session.client(
 )
 
 # Upload file to Spaces
-def upload_file_to_spaces(file_obj, filename: str, content_type: str):
+async def upload_file_to_spaces(file_obj, filename: str, content_type: str):
     bucket = os.getenv("SPACES_BUCKET")
-    client.upload_fileobj(
+    
+    await run_in_threadpool(
+        client.upload_fileobj,
         Fileobj=io.BytesIO(file_obj),
         Bucket=bucket,
         Key=filename,
         ExtraArgs={"ACL": "public-read", "ContentType": content_type}
     )
+
     file_url = f"{os.getenv('SPACES_ENDPOINT')}/{bucket}/{filename}"
     return file_url
 
@@ -138,7 +122,7 @@ async def upload_file(file: UploadFile = File(...)):
         return {"error": "Unsupported file type"}
 
     try:
-        file_url = upload_file_to_spaces(file.file, file.filename, file.content_type)
+        file_url = await upload_file_to_spaces(file.file, file.filename, file.content_type)
         return {"message": "File uploaded", "url": file_url}
     except Exception as e:
         logger.error(f"Upload failed: {e}")
@@ -270,7 +254,7 @@ async def register(
             "email": new_user.email,
             "plain_password": plain_password,  #  must match Odoo expected key
         }
-        from app.odoo_services import create_odoo_user
+       
         partner_id = create_odoo_user(odoo_user_data)
         new_user.partner_id = partner_id  # Optional if you track Odoo user ID
         logger.info(f"[Odoo Sync] User created in Odoo with ID: {partner_id}")
@@ -337,7 +321,7 @@ Here's how we keep your portal secure:<br>
 •  We do not share, resell, or transmit your data to any third party<br>
 •  All business data stays within your company instance<br>
 •  When you delete data, it's permanently erased and cannot be recovered<br>
-•  You can review our full <a href="http://170.64.163.105:3001/legal/datasecurity">Data Security & Privacy Commitment</a><br><br>
+•  You can review our full <a href=http://170.64.163.105:3001/legal/datasecurity">Data Security & Privacy Commitment</a><br><br>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━<br><br>
 📄 <strong>User Acknowledgement & Disclaimer</strong><br><br>
 To proceed, please review and accept the following during onboarding:<br>
@@ -372,8 +356,6 @@ Warm regards,<br>
 
     return {"message": f"Welcome email sent to {first_name}"}
 
-
-    
     # msg = MIMEText(welcome_message, 'html')
     # msg["Subject"] = "Welcome to EredoxPro - Let's Set Up Your Business Portal"
     # msg["From"] = auth.EMAIL_SENDER
@@ -663,6 +645,135 @@ async def get_company_name_by_unique_id(
         )
     return {"company_name": user.company_name}
 #########we can fill all company information by company_information_page
+# @app.post("/user/company_information_page", response_model=schemas.CompanyInformationResponse)
+# async def create_company_information(
+#     user_id: str = Form(...),  # ✅ NEW: Accept id as input
+#     business_reg_number: str = Form(...),
+#     industry_type: str = Form(...),
+#     other_industry: Optional[str] = Form(None),
+#     num_employees: Optional[int] = Form(None),
+#     company_website: Optional[str] = Form(None),
+#     business_phone: str = Form(...),
+#     business_email: EmailStr = Form(...),
+#     address_street: str = Form(...),
+#     address_city: str = Form(...),
+#     address_state: str = Form(...),
+#     address_postcode: str = Form(...),
+#     address_country: str = Form(...),
+#     terms_accepted: bool = Form(...),
+#     company_logo: Optional[UploadFile] = File(None),
+#     registration_doc: UploadFile = File(...),
+#     additional_files: Optional[List[UploadFile]] = File(None),
+#     db: AsyncSession = Depends(get_db)
+# ):
+#     #  NEW: Fetch user from user_id
+#     result = await db.execute(select(models.User).where(models.User.id == user_id))
+#     user = result.scalar_one_or_none()
+#     if not user:
+#         raise HTTPException(status_code=404, detail="User not found")
+#     if user.role == "admin":
+#         return {"detail": "Admin does not require company information page"}
+#     if not user.otp_verified:
+#         raise HTTPException(
+#             status_code=status.HTTP_403_FORBIDDEN,
+#             detail="Please verify your email with OTP before submitting company information"
+#         )
+
+#     # Validate terms acceptance
+#     if not terms_accepted:
+#         raise HTTPException(
+#             status_code=status.HTTP_400_BAD_REQUEST,
+#             detail="You must accept the terms and conditions"
+#         )
+
+#     # Check if user already has company info
+#     existing_info = await db.execute(
+#         select(models.CompanyInformationPageDetails)
+#         .where(models.CompanyInformationPageDetails.user_id == user.id)
+#     )
+#     if existing_info.scalar_one_or_none():
+#         raise HTTPException(
+#             status_code=status.HTTP_400_BAD_REQUEST,
+#             detail="Company information already submitted"
+#         )
+
+#     # Process file uploads
+#     os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# # Validate company_logo if provided (optional)
+#     company_logo_url = None  # initialize here
+#     if company_logo:
+#         if not allowed_file(company_logo.filename, COMPANY_LOGO_EXTENSIONS):
+#             raise HTTPException(
+#                 status_code=status.HTTP_400_BAD_REQUEST,
+#                 detail="Company logo file type is not supported. Allowed: PNG, JPG, JPEG, GIF, BMP, TIFF, SVG"
+#             )
+#         logo_filename = f"logo_{user.id}_{company_logo.filename}"
+#         company_logo_url = upload_file_to_spaces(
+#             file_obj=await company_logo.read(),
+#             filename=logo_filename,
+#             content_type=company_logo.content_type
+#     )
+
+# # Validate registration_doc (required)
+#     if not allowed_file(registration_doc.filename, REGISTRATION_DOC_EXTENSIONS):
+#         raise HTTPException(
+#             status_code=status.HTTP_400_BAD_REQUEST,
+#             detail="Registration document file type is not supported. Allowed: PDF, JPG, JPEG, PNG"
+#     )
+#     regdoc_filename = f"regdoc_{user.id}_{registration_doc.filename}"
+#     registration_doc_url = upload_file_to_spaces(
+#         file_obj=await registration_doc.read(),
+#         filename=regdoc_filename,
+#         content_type=registration_doc.content_type
+# )
+
+# # Validate additional_files (optional multiple)
+#     additional_files_urls = []
+#     if additional_files:
+#         for file in additional_files:
+#             if not allowed_file(file.filename, ADDITIONAL_FILES_EXTENSIONS):
+#                 raise HTTPException(
+#                     status_code=status.HTTP_400_BAD_REQUEST,
+#                     detail=f"Additional file '{file.filename}' type is not supported. Allowed: PDF, DOC, DOCX, XLSX, JPG, JPEG"
+#                 )
+#             additional_filename = f"additional_{user.id}_{file.filename}"
+#             url = upload_file_to_spaces(
+#                 file_obj=await file.read(),
+#                 filename=additional_filename,
+#                 content_type=file.content_type
+#             )
+#             additional_files_urls.append(url)
+
+
+#     # ✅ Use company_name from the user fetched by unique_id
+#     company_info = models.CompanyInformationPageDetails(
+#         user_id=user.id,
+#         company_name=user.company_name,
+#         business_reg_number=business_reg_number,
+#         industry_type=industry_type,
+#         other_industry=other_industry,
+#         num_employees=num_employees,
+#         company_website=company_website,
+#         business_phone=business_phone,
+#         business_email=business_email,
+#         address_street=address_street,
+#         address_city=address_city,
+#         address_state=address_state,
+#         address_postcode=address_postcode,
+#         address_country=address_country,
+#         terms_accepted=terms_accepted,
+#         company_logo_path=company_logo_url,
+#         registration_doc_path=registration_doc_url,
+#         additional_files_paths=additional_files_urls
+#     )
+
+#     db.add(company_info)
+#     await db.commit()
+#     await db.refresh(company_info)
+
+#     return company_info
+
 @app.post("/user/company_information_page", response_model=schemas.CompanyInformationResponse)
 async def create_company_information(
     user_id: str = Form(...),
@@ -730,7 +841,7 @@ async def create_company_information(
                     detail="Company logo file type is not supported. Allowed: PNG, JPG, JPEG, GIF, BMP, TIFF, SVG"
                 )
             logo_filename = f"logo_{user.id}_{company_logo.filename}"
-            company_logo_url = upload_file_to_spaces(
+            company_logo_url = await upload_file_to_spaces(
                 file_obj=await company_logo.read(),
                 filename=logo_filename,
                 content_type=company_logo.content_type
@@ -743,7 +854,7 @@ async def create_company_information(
                 detail="Registration document file type is not supported. Allowed: PDF, JPG, JPEG, PNG"
             )
         regdoc_filename = f"regdoc_{user.id}_{registration_doc.filename}"
-        registration_doc_url = upload_file_to_spaces(
+        registration_doc_url = await upload_file_to_spaces(
             file_obj=await registration_doc.read(),
             filename=regdoc_filename,
             content_type=registration_doc.content_type
@@ -759,7 +870,7 @@ async def create_company_information(
                         detail=f"Additional file '{file.filename}' type is not supported. Allowed: PDF, DOC, DOCX, XLSX, JPG, JPEG"
                     )
                 additional_filename = f"additional_{user.id}_{file.filename}"
-                url = upload_file_to_spaces(
+                url = await upload_file_to_spaces(
                     file_obj=await file.read(),
                     filename=additional_filename,
                     content_type=file.content_type
@@ -792,13 +903,16 @@ async def create_company_information(
         await db.commit()
         await db.refresh(company_info)
 
-        # ✅ Return a valid response_model to prevent 500 error
+        #  Return a valid response_model to prevent 500 error
         return schemas.CompanyInformationResponse.from_orm(company_info)
 
+    # except Exception as e:
+    #     print(f"Internal Server Error: {e}")
+    #     raise HTTPException(status_code=500, detail="Internal Server Error")
     except Exception as e:
+        traceback.print_exc()  # 🔥 prints full traceback
         print(f"Internal Server Error: {e}")
-        raise HTTPException(status_code=500, detail="Internal Server Error")
-
+    raise HTTPException(status_code=500, detail="Internal Server Error")
 ########check user filled company information page
 @app.get("/check-company-info-status", response_model=dict)
 async def check_company_info_status(
@@ -1205,7 +1319,7 @@ async def edit_company_information_files(
                 detail="Invalid logo file type. Allowed: PNG, JPG, JPEG, GIF, BMP, TIFF, SVG, JFIF"
             )
         logo_filename = f"logo_{user.id}_{company_logo.filename}"
-        logo_url = upload_file_to_spaces(
+        logo_url = await upload_file_to_spaces(
             file_obj=await company_logo.read(),
             filename=logo_filename,
             content_type=company_logo.content_type
@@ -1220,7 +1334,7 @@ async def edit_company_information_files(
                 detail="Invalid registration document. Allowed: PDF, JPG, JPEG, PNG"
             )
         regdoc_filename = f"regdoc_{user.id}_{registration_doc.filename}"
-        regdoc_url = upload_file_to_spaces(
+        regdoc_url =await upload_file_to_spaces(
             file_obj=await registration_doc.read(),
             filename=regdoc_filename,
             content_type=registration_doc.content_type
@@ -1237,7 +1351,7 @@ async def edit_company_information_files(
                     detail=f"Invalid additional file '{file.filename}'. Allowed: PDF, DOC, DOCX, XLSX, JPG, JPEG"
                 )
             additional_filename = f"additional_{user.id}_{file.filename}"
-            url = upload_file_to_spaces(
+            url = await upload_file_to_spaces(
                 file_obj=await file.read(),
                 filename=additional_filename,
                 content_type=file.content_type

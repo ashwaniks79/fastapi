@@ -117,6 +117,7 @@ class UnifiedLoginResponse(BaseModel):
     token_type: str = "bearer"
     status: str = "true"
     role: str
+    message: Optional[str]
     user: UserOut 
 
     class Config:
@@ -246,8 +247,10 @@ class CompanyInformationResponse(CompanyInformationBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
+    # class Config:
+    #     orm_mode = True
     class Config:
-        orm_mode = True
+        from_attributes = True
 ####################################Delete Account#############
 
 
@@ -272,8 +275,12 @@ class SubscriptionResponse(BaseModel):
 
 class UpgradeSubscriptionRequest(BaseModel):
     tier: str  # "free", "silver", "gold"
+    user_id: str
+    success_url: str
+    cancel_url: str
+    customer_email: EmailStr
     coupon_code: Optional[str] = None
-
+    
 class UpgradeSubscriptionResponse(BaseModel):
     success: bool
     message: str
