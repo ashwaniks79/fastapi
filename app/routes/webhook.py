@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Subscription, User
 from app.constants import TIER_FEATURES, STRIPE_PRICE_IDS
 from datetime import datetime, timedelta
+from sqlalchemy import update
 
 router = APIRouter()
 
@@ -53,6 +54,15 @@ async def stripe_webhook(
             subscription.start_date = datetime.utcnow()
             subscription.end_date = datetime.utcnow() + timedelta(days=30)
             subscription.features_enabled = TIER_FEATURES[selected_plan]
+
+            # Reset usage counters on upgrade
+            subscription.projects_used = 0
+            subscription.documents_uploaded = 0
+            subscription.queries_made = 0
+
+            # Mark trial as used if it was free before
+            if selected_plan != "free":
+                subscription.trial_used = True
             await db.commit()
 
     return {"status": "success"}

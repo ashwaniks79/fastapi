@@ -42,6 +42,8 @@ class User(Base):
 
     company_info = relationship("CompanyInformationPageDetails", back_populates="user", uselist=False)
     subscription = relationship("Subscription", back_populates="user", uselist=False)
+    trial_start_date = Column(DateTime(timezone=True), nullable=True)
+    trial_expiry_date = Column(DateTime(timezone=True), nullable=True)
 
 
 # -------------------------
@@ -94,6 +96,14 @@ class Subscription(Base):
 
     auto_renew = Column(Boolean, nullable=False, server_default=expression.true())
     active = Column(Boolean, nullable=False, server_default=expression.true())
+
+    # Usage tracking
+    trial_used = Column(Boolean, nullable=False, server_default=expression.false())  # 5-day free trial
+    projects_used = Column(Integer, nullable=False, server_default="0")               # Track active projects
+    documents_uploaded = Column(Integer, nullable=False, server_default="0")          # Track uploaded docs
+    queries_made = Column(Integer, nullable=False, server_default="0")                # Track AI queries used
+
+    # Optional: store which features are unlocked
     features_enabled = Column(ARRAY(String), nullable=True)
 
     user = relationship("User", back_populates="subscription")

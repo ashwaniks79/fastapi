@@ -1,14 +1,11 @@
-
-
-
-
 from sqlalchemy.ext.asyncio import AsyncSession
 from . import models, schemas
 from .auth import get_password_hash
 from typing import Union
 from app.odoo_services import  create_odoo_user
-
+from datetime import datetime, timedelta
 import logging
+from .logging_model import RequestLog
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +24,10 @@ async def create_user(db: AsyncSession, user: Union[schemas.UserCreate, schemas.
         timezone=user.timezone,
         subscription_plan=user.subscription_plan,
         role=role,
+        trial_start_date=datetime.utcnow(),
+        trial_expiry_date=datetime.utcnow() + timedelta(days=5),
     )
+    
     db.add(db_user)
     await db.commit()
     await db.refresh(db_user)
@@ -36,7 +36,7 @@ async def create_user(db: AsyncSession, user: Union[schemas.UserCreate, schemas.
 
 # In crud.py add this function
 async def create_request_log(db: AsyncSession, log_data: dict):
-    from .logging_model import RequestLog
+ 
     try:
         db_log = RequestLog(
             timestamp=log_data["timestamp"],

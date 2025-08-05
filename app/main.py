@@ -1,7 +1,7 @@
 
 
 #import statements all in one 
-from app.constants import TIER_PRICING
+from app.constants import COUPONS, TIER_FEATURES, TIER_PRICING
 from fastapi import Depends, Header, FastAPI, HTTPException, status, Request, BackgroundTasks, Body, File, UploadFile, Query
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -58,7 +58,9 @@ from fastapi import HTTPException
 from app import auth
 from app.odoo_routes import router as odoo_router
 from fastapi.concurrency import run_in_threadpool
-#app start
+from app.routes import dashboard, projects
+
+
 
 # Load environment variables
 load_dotenv()
@@ -69,6 +71,9 @@ app = FastAPI()
 app.include_router(odoo_router)
 app.include_router(payment.router, prefix="/api")
 app.include_router(webhook.router, prefix="/api")
+app.include_router(dashboard.router, tags=["Dashboard"])
+app.include_router(projects.router, tags=["Projects"])
+#app start
 #logs 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
