@@ -6,7 +6,8 @@ from app.odoo_services import  create_odoo_user
 from datetime import datetime, timedelta
 import logging
 from .logging_model import RequestLog
-
+from sqlalchemy.future import select
+from .models import User
 logger = logging.getLogger(__name__)
 
 async def create_user(db: AsyncSession, user: Union[schemas.UserCreate, schemas.CreateUserByAdmin], role: str = "customer", user_id: str = None):
@@ -55,3 +56,7 @@ async def create_request_log(db: AsyncSession, log_data: dict):
     except Exception as e:
         await db.rollback()
         raise e
+    
+async def get_user_by_id(db: AsyncSession, user_id: str):
+    result = await db.execute(select(User).where(User.id == user_id))
+    return result.scalars().first()

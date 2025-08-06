@@ -11,6 +11,7 @@ router = APIRouter()
 @router.post("/odoo/sync-user/{user_id}")
 async def sync_user_to_odoo(user_id: str, db: AsyncSession = Depends(get_db)):
     user = await crud.get_user_by_id(db, user_id)
+    print("User fetched from DB:", user)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     try:

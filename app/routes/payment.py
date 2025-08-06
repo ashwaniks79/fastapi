@@ -17,7 +17,8 @@ async def create_checkout_session(
     db: AsyncSession = Depends(get_db)
 ):
     try:
-        if request.tier.lower() not in STRIPE_PRICE_IDS:
+        tier = request.tier.lower()
+        if tier not in STRIPE_PRICE_IDS:
             raise HTTPException(status_code=400, detail="Invalid subscription tier")
 
         session = stripe.checkout.Session.create(
@@ -25,13 +26,16 @@ async def create_checkout_session(
             mode="subscription",
             line_items=[
                 {
-                    "price": STRIPE_PRICE_IDS[request.tier.lower()],
+                    "price": STRIPE_PRICE_IDS[tier],
                     "quantity": 1
                 }
             ],
             success_url=request.success_url,
             cancel_url=request.cancel_url,
             customer_email=request.customer_email,
+            metadata={  
+                "plan": tier
+            }
         )
 
         return {"checkout_url": session.url}

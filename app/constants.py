@@ -13,11 +13,18 @@ COUPONS = {
     "FREETRIAL": 1.00
 }
 
-# Stripe Price IDs (replace with real IDs from Stripe)
+# Stripe Price IDs for live(replace with real IDs from Stripe)
+# STRIPE_PRICE_IDS = {
+#     "free": None,
+#     "silver": "price_1Rqvp6GmURqtLVT55QKLJulL",
+#     "gold": "price_1RqvqOGmURqtLVT5tR9YfWpB"
+# }
+
+## For testing
 STRIPE_PRICE_IDS = {
     "free": None,
-    "silver": "price_1Rqvp6GmURqtLVT55QKLJulL",
-    "gold": "price_1RqvqOGmURqtLVT5tR9YfWpB"
+    "silver": "price_1RskcRGmURqtLVT5PeOEppew",
+    "gold": "price_1RskezGmURqtLVT5n3vghbej"
 }
 
 # Feature access by tier
