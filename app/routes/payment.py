@@ -30,11 +30,13 @@ async def create_checkout_session(
                     "quantity": 1
                 }
             ],
+            # discounts=[{"coupon": request.coupon_code}] if request.coupon_code else [],
             success_url=request.success_url,
             cancel_url=request.cancel_url,
             customer_email=request.customer_email,
             metadata={  
-                "plan": tier
+                "user_id": request.user_id,
+                "tier": tier
             }
         )
 

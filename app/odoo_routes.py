@@ -16,6 +16,7 @@ async def sync_user_to_odoo(user_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="User not found")
     try:
         partner_id = create_odoo_user(user)
+        
         return {"partner_id": partner_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Odoo sync failed: {str(e)}")

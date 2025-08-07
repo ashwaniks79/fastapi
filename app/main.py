@@ -70,7 +70,10 @@ app = FastAPI()
 # Include the Odoo test endpoint
 app.include_router(odoo_router)
 app.include_router(payment.router, prefix="/api")
-app.include_router(webhook.router, prefix="/api")
+# app.include_router(webhook.router, prefix="/api")
+# app.include_router(webhook.router)
+app.include_router(webhook.router, prefix="/payment")
+
 app.include_router(dashboard.router, tags=["Dashboard"])
 app.include_router(projects.router, tags=["Projects"])
 #app start

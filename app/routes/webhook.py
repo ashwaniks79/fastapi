@@ -1,72 +1,67 @@
-from fastapi import APIRouter, Request, Header, HTTPException, Depends
-from sqlalchemy.future import select
+from fastapi import APIRouter, Request, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models import Subscription, User
-from app.constants import TIER_FEATURES, STRIPE_PRICE_IDS
+from app.constants import TIER_FEATURES
 from datetime import datetime, timedelta
 import stripe
 import os
 
 router = APIRouter()
 
+# Set API key and secret
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 endpoint_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
 
 @router.post("/webhook")
-async def stripe_webhook(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    stripe_signature: str = Header(None, alias="stripe-signature")
-):
+async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
 
     try:
-        event = stripe.Webhook.construct_event(payload, stripe_signature, endpoint_secret)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid payload")
-    except stripe.error.SignatureVerificationError:
-        raise HTTPException(status_code=400, detail="Invalid signature")
+        event = stripe.Webhook.construct_event(payload, sig_header, endpoint_secret)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     if event["type"] == "checkout.session.completed":
-        print("✅ Webhook received:", event["type"])
         session = event["data"]["object"]
-        customer_email = session["customer_email"]
-        subscription_id = session.get("subscription")
+        print("Session data:", session) 
+        metadata = session.get("metadata", {})
+        print("Metadata received:", metadata)
+        user_id = metadata.get("user_id")
+        tier = metadata.get("tier")
 
-        # ✅ Get the subscription object from Stripe
-        stripe_sub = stripe.Subscription.retrieve(subscription_id)
-        price_id = stripe_sub['items']['data'][0]['price']['id']
+        if not user_id or not tier:
+            raise HTTPException(status_code=400, detail="Missing user_id or tier in metadata")
 
-        selected_plan = next((plan for plan, stripe_id in STRIPE_PRICE_IDS.items() if stripe_id == price_id), None)
+        user = await db.get(User, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
 
-        if not selected_plan:
-            raise HTTPException(status_code=400, detail="Plan not matched")
+        stripe_sub_id = session.get("subscription")
+        stripe_sub = stripe.Subscription.retrieve(stripe_sub_id)
 
-        result = await db.execute(select(User).where(User.email == customer_email))
-        user = result.scalar_one_or_none()
+        user.subscription_plan = tier.lower()
+        user.stripe_customer_id = session.get("customer")
 
-        if user:
-            # Update User and Subscription
-            user.subscription_plan = selected_plan
+        subscription = await db.get(Subscription, user.id)
+        if not subscription:
+            subscription = Subscription(subscription_id=user.id)
+            db.add(subscription)
 
-            result = await db.execute(select(Subscription).where(Subscription.subscription_id == user.id))
-            subscription = result.scalar_one_or_none()
+        subscription.subscriptions_plan = tier.lower()
+        subscription.active = True
+        subscription.start_date = datetime.utcnow()
+        subscription.end_date = datetime.utcnow() + timedelta(days=30)
+        subscription.features_enabled = TIER_FEATURES[tier]
+        subscription.projects_used = 0
+        subscription.documents_uploaded = 0
+        subscription.queries_made = 0
+        subscription.trial_used = True
 
-            if not subscription:
-                subscription = Subscription(subscription_id=user.id)
-                db.add(subscription)
+        await db.commit()
 
-            subscription.subscriptions_plan = selected_plan
-            subscription.active = True
-            subscription.start_date = datetime.utcnow()
-            subscription.end_date = datetime.utcnow() + timedelta(days=30)
-            subscription.features_enabled = TIER_FEATURES[selected_plan]
-            subscription.projects_used = 0
-            subscription.documents_uploaded = 0
-            subscription.queries_made = 0
-            subscription.trial_used = True
+        return {"status": "success"}
 
-            await db.commit()
-
-    return {"status": "success"}
+    # Handle other events gracefully
+    return {"status": "ignored", "event": event["type"]}
