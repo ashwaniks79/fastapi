@@ -30,3 +30,12 @@ boto3
 stripe
 alembic
 psycopg2-binary
+boto3
+chromadb
+PyPDF2
+python-docx
+openpyxl
+tqdm
+openai>=1.0.0
+pillow
+pytesseract

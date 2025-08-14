@@ -8,6 +8,8 @@ import logging
 from .logging_model import RequestLog
 from sqlalchemy.future import select
 from .models import User
+from sqlalchemy import select
+from .models import Document, DocumentChunk, Subscription
 logger = logging.getLogger(__name__)
 
 async def create_user(db: AsyncSession, user: Union[schemas.UserCreate, schemas.CreateUserByAdmin], role: str = "customer", user_id: str = None):
@@ -60,3 +62,70 @@ async def create_request_log(db: AsyncSession, log_data: dict):
 async def get_user_by_id(db: AsyncSession, user_id: str):
     result = await db.execute(select(User).where(User.id == user_id))
     return result.scalars().first()
+
+
+
+# async def create_document(db: AsyncSession, user_id: str, filename: str, content_type: str, size: int, storage_key: str):
+#     doc = Document(user_id=user_id, filename=filename, content_type=content_type, size=size, storage_key=storage_key)
+#     db.add(doc)
+#     await db.commit()
+#     await db.refresh(doc)
+#     return doc
+async def create_document(
+    db: AsyncSession,
+    user_id: str,
+    filename: str,
+    content_type: str,
+    size: int,
+    storage_key: str,
+    url: str = None  # <-- new param
+):
+    doc = Document(
+        user_id=user_id,
+        filename=filename,
+        content_type=content_type,
+        size=size,
+        storage_key=storage_key,
+        url=url  # <-- store url if provided
+    )
+    db.add(doc)
+    await db.commit()
+    await db.refresh(doc)
+    return doc
+
+
+async def create_document_chunk(db: AsyncSession, document_id: int, chunk_index: int, text: str, vector_id: str = None):
+    chunk = DocumentChunk(document_id=document_id, chunk_index=chunk_index, text=text, vector_id=vector_id)
+    db.add(chunk)
+    await db.commit()
+    await db.refresh(chunk)
+    return chunk
+
+async def get_documents_for_user(db: AsyncSession, user_id: str):
+    res = await db.execute(select(Document).where(Document.user_id == user_id, Document.deleted == False))
+    return res.scalars().all()
+
+async def mark_document_deleted(db: AsyncSession, document_id: int):
+    doc = await db.get(Document, document_id)
+    if not doc:
+        return None
+    doc.deleted = True
+    await db.commit()
+    return doc
+
+# subscription counters - note: Subscription.subscription_id == users.id
+async def increment_documents_counter(db: AsyncSession, user_id: str, by: int = 1):
+    sub = await db.get(Subscription, user_id)
+    if not sub:
+        return None
+    sub.documents_uploaded = (sub.documents_uploaded or 0) + by
+    await db.commit()
+    return sub
+
+async def increment_queries_counter(db: AsyncSession, user_id: str, by: int = 1):
+    sub = await db.get(Subscription, user_id)
+    if not sub:
+        return None
+    sub.queries_made = (sub.queries_made or 0) + by
+    await db.commit()
+    return sub
