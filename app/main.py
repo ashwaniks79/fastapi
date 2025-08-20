@@ -9,7 +9,6 @@ from sqlalchemy.future import select
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import List
 from pydantic import BaseModel, EmailStr
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -35,7 +34,7 @@ from .schemas import UserOut
 from .auth import get_current_user, get_current_admin, create_access_token, create_refresh_token, verify_password
 from .models import User
 from .database import get_db
-from app.logging_model import RequestLog
+# from app.logging_model import RequestLog
 import base64
 from datetime import timezone
 from typing import List, Optional
@@ -61,9 +60,6 @@ from fastapi.concurrency import run_in_threadpool
 from app.routes import dashboard, projects
 from app.routes import files as files_router, chat as chat_router, agent as agent_router
 from app.services.storage import upload_file_to_spaces
-
-
-
 
 
 # Load environment variables
@@ -95,8 +91,8 @@ MAILGUN_DOMAIN = auth.MAILGUN_DOMAIN
 EMAIL_SENDER = auth.EMAIL_SENDER
 #file types
 COMPANY_LOGO_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".svg", ".jfif"}  # image/*
-REGISTRATION_DOC_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}
-ADDITIONAL_FILES_EXTENSIONS = {".pdf", ".doc", ".docx", ".xlsx", ".jpg", ".jpeg"}
+REGISTRATION_DOC_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png",".doc",".txt"}
+ADDITIONAL_FILES_EXTENSIONS = {".pdf", ".doc", ".docx", ".xlsx", ".jpg", ".jpeg",".png"}
 #allowed files
 def allowed_file(filename: str, allowed_extensions: set) -> bool:
     ext = os.path.splitext(filename.lower())[1]
@@ -140,6 +136,14 @@ def allowed_file(filename: str, allowed_extensions: set) -> bool:
 #     except Exception as e:
 #         logger.error(f"Upload failed: {e}")
 #         return {"error": "File upload failed"}
+#app middleware log requests 
+
+logging.basicConfig(
+    filename="app.log",  
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
     
 #CORS middleware
 app.add_middleware(
@@ -149,18 +153,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-#app middleware log requests 
+
+
+#  Request logging middleware (DB part removed)
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start_time = datetime.now(timezone.utc)
+
     if request.url.path in ["/docs", "/openapi.json", "/redoc"]:
         return await call_next(request)
+
     try:
         response = await call_next(request)
     except HTTPException as http_exc:
         process_time = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
         log_data = {
-            "timestamp": start_time.astimezone(timezone.utc).replace(tzinfo=None),
+            "timestamp": start_time.isoformat(),
             "method": request.method,
             "path": request.url.path,
             "ip": request.client.host if request.client else None,
@@ -169,15 +177,16 @@ async def log_requests(request: Request, call_next):
             "user_agent": request.headers.get("user-agent"),
             "error": http_exc.detail
         }
-        logger.error(json.dumps({**log_data, "timestamp": log_data["timestamp"].isoformat()}))
+        logger.error(json.dumps(log_data))
         raise http_exc
     except Exception as e:
-        process_time = (datetime.now(timezone.utc)- start_time).total_seconds() * 1000
+        process_time = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
         logger.error(f"Request failed: {str(e)}")
         raise
+
     process_time = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
     log_data = {
-        "timestamp": start_time.astimezone(timezone.utc).replace(tzinfo=None),
+        "timestamp": start_time.isoformat(),
         "method": request.method,
         "path": request.url.path,
         "ip": request.client.host if request.client else None,
@@ -185,6 +194,8 @@ async def log_requests(request: Request, call_next):
         "process_time_ms": process_time,
         "user_agent": request.headers.get("user-agent"),
     }
+
+    # Extra info: login attempts
     if request.url.path == "/login":
         try:
             body = await request.json()
@@ -196,6 +207,8 @@ async def log_requests(request: Request, call_next):
             }
         except Exception as e:
             logger.warning(f"Failed to parse login data: {str(e)}")
+
+    # Extra info: file uploads
     if request.url.path == "/upload":
         try:
             log_data["additional_data"] = {
@@ -204,23 +217,26 @@ async def log_requests(request: Request, call_next):
             }
         except Exception as e:
             logger.warning(f"Failed to log upload details: {str(e)}")
-    console_log = {**log_data, "timestamp": log_data["timestamp"].isoformat()}
-    logger.info(json.dumps(console_log, default=str))
-    try:
-        db = database.async_session()
-        await crud.create_request_log(db, log_data)
-    except Exception as e:
-        logger.error(f"Database log failed: {str(e)}")
-    finally:
-        await db.close()
+
+    logger.info(json.dumps(log_data))
     return response
 #start models
+# @app.on_event("startup")
+# async def on_startup():
+#     async with database.engine.begin() as conn:
+#         await conn.run_sync(models.Base.metadata.create_all)
+#         await conn.run_sync(RequestLog.metadata.create_all)
 @app.on_event("startup")
 async def on_startup():
+    """
+    Universal solution:
+    - In production, Alembic migrations will be applied 
+      (via: docker-compose exec web alembic upgrade head)
+    - In local/dev environments, if migrations are not applied, 
+      the tables will be auto-created so the app won’t crash
+    """
     async with database.engine.begin() as conn:
-        await conn.run_sync(models.Base.metadata.create_all)
-        from .logging_model import RequestLog
-        await conn.run_sync(RequestLog.metadata.create_all)
+        await conn.run_sync(models.Base.metadata.create_all) 
 #register API's
 @app.post("/register", response_model=schemas.UnifiedLoginResponse)
 async def register(
@@ -676,12 +692,12 @@ async def create_company_information(
     address_country: str = Form(...),
     terms_accepted: bool = Form(...),
     company_logo: Optional[UploadFile] = File(None),
-    registration_doc: UploadFile = File(...),
+    registration_doc: Optional[UploadFile] = File(None),  # 👈 update ke liye optional kar diya
     additional_files: Optional[List[UploadFile]] = File(None),
     db: AsyncSession = Depends(get_db)
 ):
     try:
-        # Fetch user
+        # --- user check ---
         result = await db.execute(select(models.User).where(models.User.id == user_id))
         user = result.scalar_one_or_none()
         if not user:
@@ -702,28 +718,23 @@ async def create_company_information(
                 detail="You must accept the terms and conditions"
             )
 
-        # Check if already submitted
-        existing_info = await db.execute(
+        # --- check if already submitted ---
+        existing_info_result = await db.execute(
             select(models.CompanyInformationPageDetails).where(
                 models.CompanyInformationPageDetails.user_id == user.id
             )
         )
-        if existing_info.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Company information already submitted"
-            )
+        existing_info = existing_info_result.scalar_one_or_none()
 
-        # Create upload dir
         os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-        # Handle company logo (optional)
+        # 🖼️ company logo
         company_logo_url = None
         if company_logo:
             if not allowed_file(company_logo.filename, COMPANY_LOGO_EXTENSIONS):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Company logo file type is not supported. Allowed: PNG, JPG, JPEG, GIF, BMP, TIFF, SVG"
+                    detail="Company logo file type is not supported"
                 )
             logo_filename = f"logo_{user.id}_{company_logo.filename}"
             company_logo_url = await upload_file_to_spaces(
@@ -732,27 +743,29 @@ async def create_company_information(
                 content_type=company_logo.content_type
             )
 
-        # Handle registration doc (required)
-        if not allowed_file(registration_doc.filename, REGISTRATION_DOC_EXTENSIONS):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Registration document file type is not supported. Allowed: PDF, JPG, JPEG, PNG"
+        # 📄 registration doc
+        registration_doc_url = None
+        if registration_doc: 
+            if not allowed_file(registration_doc.filename, REGISTRATION_DOC_EXTENSIONS):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Registration document file type is not supported"
+                )
+            regdoc_filename = f"regdoc_{user.id}_{registration_doc.filename}"
+            registration_doc_url = await upload_file_to_spaces(
+                file_obj=await registration_doc.read(),
+                filename=regdoc_filename,
+                content_type=registration_doc.content_type
             )
-        regdoc_filename = f"regdoc_{user.id}_{registration_doc.filename}"
-        registration_doc_url = await upload_file_to_spaces(
-            file_obj=await registration_doc.read(),
-            filename=regdoc_filename,
-            content_type=registration_doc.content_type
-        )
 
-        # Handle additional files (optional)
+        # 📎 additional files
         additional_files_urls = []
         if additional_files:
             for file in additional_files:
                 if not allowed_file(file.filename, ADDITIONAL_FILES_EXTENSIONS):
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Additional file '{file.filename}' type is not supported. Allowed: PDF, DOC, DOCX, XLSX, JPG, JPEG"
+                        detail=f"Additional file '{file.filename}' type is not supported"
                     )
                 additional_filename = f"additional_{user.id}_{file.filename}"
                 url = await upload_file_to_spaces(
@@ -762,42 +775,127 @@ async def create_company_information(
                 )
                 additional_files_urls.append(url)
 
-        # Create and save model instance
-        company_info = models.CompanyInformationPageDetails(
-            user_id=user.id,
-            company_name=user.company_name,
-            business_reg_number=business_reg_number,
-            industry_type=industry_type,
-            other_industry=other_industry,
-            num_employees=num_employees,
-            company_website=company_website,
-            business_phone=business_phone,
-            business_email=business_email,
-            address_street=address_street,
-            address_city=address_city,
-            address_state=address_state,
-            address_postcode=address_postcode,
-            address_country=address_country,
-            terms_accepted=terms_accepted,
-            company_logo_path=company_logo_url,
-            registration_doc_path=registration_doc_url,
-            additional_files_paths=additional_files_urls
-        )
+        if existing_info:
+            # 🔄 Update logic
+            existing_info.business_reg_number = business_reg_number
+            existing_info.industry_type = industry_type
+            existing_info.other_industry = other_industry
+            existing_info.num_employees = num_employees
+            existing_info.company_website = company_website
+            existing_info.business_phone = business_phone
+            existing_info.business_email = business_email
+            existing_info.address_street = address_street
+            existing_info.address_city = address_city
+            existing_info.address_state = address_state
+            existing_info.address_postcode = address_postcode
+            existing_info.address_country = address_country
+            existing_info.terms_accepted = terms_accepted
 
-        db.add(company_info)
-        await db.commit()
-        await db.refresh(company_info)
+            if company_logo_url:
+                existing_info.company_logo_path = company_logo_url
+            if registration_doc_url:
+                existing_info.registration_doc_path = registration_doc_url
+            if additional_files_urls:
+                existing_info.additional_files_paths = additional_files_urls
 
-        #  Return a valid response_model to prevent 500 error
-        return schemas.CompanyInformationResponse.from_orm(company_info)
+            await db.commit()
+            await db.refresh(existing_info)
 
-    # except Exception as e:
-    #     print(f"Internal Server Error: {e}")
-    #     raise HTTPException(status_code=500, detail="Internal Server Error")
+            return {
+                "detail": "Company information updated successfully",
+                **schemas.CompanyInformationResponse.from_orm(existing_info).dict()
+            }
+
+        else:
+            # 🆕 Create new entry
+            if not registration_doc_url:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Registration document is required for new submission"
+                )
+
+            company_info = models.CompanyInformationPageDetails(
+                user_id=user.id,
+                company_name=user.company_name,
+                business_reg_number=business_reg_number,
+                industry_type=industry_type,
+                other_industry=other_industry,
+                num_employees=num_employees,
+                company_website=company_website,
+                business_phone=business_phone,
+                business_email=business_email,
+                address_street=address_street,
+                address_city=address_city,
+                address_state=address_state,
+                address_postcode=address_postcode,
+                address_country=address_country,
+                terms_accepted=terms_accepted,
+                company_logo_path=company_logo_url,
+                registration_doc_path=registration_doc_url,
+                additional_files_paths=additional_files_urls
+            )
+
+            db.add(company_info)
+            await db.commit()
+            await db.refresh(company_info)
+
+            return {
+                "detail": "Company information submitted successfully",
+                **schemas.CompanyInformationResponse.from_orm(company_info).dict()
+            }
+
+    except HTTPException as http_exc:
+        raise http_exc
     except Exception as e:
-        traceback.print_exc()  # 🔥 prints full traceback
+        traceback.print_exc()
         print(f"Internal Server Error: {e}")
-    raise HTTPException(status_code=500, detail="Internal Server Error")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+
+@app.get("/user/company_information_page", response_model=schemas.CompanyInformationResponse)
+async def get_company_information(
+    authorization: str = Header(...),
+    db: AsyncSession = Depends(get_db)
+):
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid authorization header")
+
+    token = authorization[7:]
+
+    try:
+        payload = auth.decode_access_token(token)
+        user_email = payload.get("sub")
+        if user_email is None:
+            raise HTTPException(status_code=401, detail="Invalid token payload")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    # get user
+    result = await db.execute(select(models.User).where(models.User.email == user_email))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Admin check
+    if user.role == "admin":
+        return {"detail": "Admin does not require company information page"}
+
+    # fetch company info
+    company_result = await db.execute(
+        select(models.CompanyInformationPageDetails).where(
+            models.CompanyInformationPageDetails.user_id == user.id
+        )
+    )
+    company_info = company_result.scalar_one_or_none()
+
+    if not company_info:
+        # New user, no data
+        return {"detail": "No company information submitted yet"}
+
+    # Return existing info (prefill)
+    return schemas.CompanyInformationResponse.from_orm(company_info)
+
+
 ########check user filled company information page
 @app.get("/check-company-info-status", response_model=dict)
 async def check_company_info_status(
@@ -833,30 +931,7 @@ async def check_company_info_status(
     else:
         return {"filled": False, "message": "Company information not submitted yet"}
 #############user can delete account of a particular use
-@app.delete("/delete-account", status_code=status.HTTP_200_OK)
-# async def delete_account(
-#        credentials: schemas.DeleteAccountRequest,
-#        db: AsyncSession = Depends(database.get_db)
-#    ):
-#        # 1. Fetch user by email
-#        result = await db.execute(select(models.User).where(models.User.email == credentials.email))
-#        user = result.scalar_one_or_none()
 
-#        if not user:
-#            raise HTTPException(status_code=404, detail="User  not found")
-
-#        # 2. Verify password
-#        if not await auth.verify_password(credentials.password, user.hashed_password):
-#            raise HTTPException(status_code=401, detail="Incorrect password")
-
-#        # 3. Delete related company information
-#        await db.execute(delete(models.CompanyInformationPageDetails).where(models.CompanyInformationPageDetails.user_id == user.id))
-
-#        # 4. Delete user
-#        await db.delete(user)
-#        await db.commit()
-
-#        return {"detail": f"Account associated with {credentials.email} has been deleted."}
 @app.delete("/delete-account", status_code=status.HTTP_200_OK)
 async def delete_account(
     credentials: schemas.DeleteAccountRequest,

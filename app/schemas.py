@@ -176,20 +176,20 @@ class UnifiedUserUpdate(BaseModel):
         return v  
     
 # Add this to schemas.py
-class RequestLogSchema(BaseModel):
-    timestamp: datetime
-    method: str
-    path: str
-    ip: Optional[str]
-    status_code: int
-    process_time_ms: float
-    user_agent: Optional[str]
-    additional_data: Optional[dict]
+# class RequestLogSchema(BaseModel):
+#     timestamp: datetime
+#     method: str
+#     path: str
+#     ip: Optional[str]
+#     status_code: int
+#     process_time_ms: float
+#     user_agent: Optional[str]
+#     additional_data: Optional[dict]
     
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+#     class Config:
+#         json_encoders = {
+#             datetime: lambda v: v.isoformat()
+#         }
 # Add these new schemas
 class OTPCreate(BaseModel):
     email: EmailStr

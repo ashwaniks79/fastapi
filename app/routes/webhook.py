@@ -25,30 +25,30 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, endpoint_secret)
-        logger.info(f"🔔 Event received: {event['type']}")
+        logger.info(f" Event received: {event['type']}")
 
     except Exception as e:
-        logger.error(f"❌ Invalid webhook signature: {str(e)}")
+        logger.error(f" Invalid webhook signature: {str(e)}")
         raise HTTPException(status_code=400, detail="Invalid signature")
 
     try:
         if event["type"] == "checkout.session.completed":
             session = event["data"]["object"]
-            logger.info(f"✅ Checkout session completed: {session['id']}")
+            logger.info(f" Checkout session completed: {session['id']}")
 
             metadata = session.get("metadata", {})
-            logger.info(f"📝 Metadata: {metadata}")
+            logger.info(f" Metadata: {metadata}")
 
             user_id = metadata.get("user_id")
             tier = metadata.get("tier")
 
             if not user_id or not tier:
-                logger.warning("⚠️ Missing metadata: user_id or tier")
+                logger.warning(" Missing metadata: user_id or tier")
                 return {"status": "metadata missing"}
 
             user = await db.get(User, user_id)
             if not user:
-                logger.warning(f"❌ User not found: {user_id}")
+                logger.warning(f" User not found: {user_id}")
                 return {"status": "user not found"}
 
             stripe_sub_id = session.get("subscription")
@@ -75,31 +75,31 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             subscription.trial_used = True
 
             await db.commit()
-            logger.info(f"🎉 Plan upgraded to {tier} for user {user_id}")
+            logger.info(f" Plan upgraded to {tier} for user {user_id}")
 
         elif event["type"] == "invoice.paid":
             invoice = event["data"]["object"]
-            logger.info(f"💰 Invoice paid: {invoice['id']} for customer: {invoice['customer']}")
+            logger.info(f" Invoice paid: {invoice['id']} for customer: {invoice['customer']}")
 
             # TODO: Add logic to confirm payment and extend subscription if needed
 
         elif event["type"] == "customer.subscription.created":
             subscription = event["data"]["object"]
-            logger.info(f"📩 Subscription created: {subscription['id']} for customer: {subscription['customer']}")
+            logger.info(f" Subscription created: {subscription['id']} for customer: {subscription['customer']}")
 
             # Optional: Record in DB, if you want to track all subscriptions
 
         elif event["type"] == "payment_intent.succeeded":
             payment_intent = event["data"]["object"]
-            logger.info(f"✅ Payment succeeded: {payment_intent['id']} amount={payment_intent['amount_received']}")
+            logger.info(f" Payment succeeded: {payment_intent['id']} amount={payment_intent['amount_received']}")
 
             # Optional: Add any custom payment success logic
 
         else:
-            logger.info(f"ℹ️ Ignored event type: {event['type']}")
+            logger.info(f" Ignored event type: {event['type']}")
 
     except Exception as e:
-        logger.error(f"❌ Error processing event {event['type']}: {str(e)}")
+        logger.error(f" Error processing event {event['type']}: {str(e)}")
         raise HTTPException(status_code=500, detail="Webhook handling failed")
 
     return {"status": "success", "event": event["type"]}

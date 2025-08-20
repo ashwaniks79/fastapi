@@ -5,7 +5,7 @@ from typing import Union
 from app.odoo_services import  create_odoo_user
 from datetime import datetime, timedelta
 import logging
-from .logging_model import RequestLog
+# from .logging_model import RequestLog
 from sqlalchemy.future import select
 from .models import User
 from sqlalchemy import select
@@ -37,27 +37,27 @@ async def create_user(db: AsyncSession, user: Union[schemas.UserCreate, schemas.
     return db_user
 
 
-# In crud.py add this function
-async def create_request_log(db: AsyncSession, log_data: dict):
+# # In crud.py add this function
+# async def create_request_log(db: AsyncSession, log_data: dict):
  
-    try:
-        db_log = RequestLog(
-            timestamp=log_data["timestamp"],
-            method=log_data["method"],
-            path=log_data["path"],
-            ip=log_data["ip"],
-            status_code=log_data["status_code"],
-            process_time_ms=log_data["process_time_ms"],
-            user_agent=log_data["user_agent"],
-            additional_data=log_data.get("additional_data")
-        )
-        db.add(db_log)
-        await db.commit()
-        await db.refresh(db_log)
-        return db_log
-    except Exception as e:
-        await db.rollback()
-        raise e
+#     try:
+#         db_log = RequestLog(
+#             timestamp=log_data["timestamp"],
+#             method=log_data["method"],
+#             path=log_data["path"],
+#             ip=log_data["ip"],
+#             status_code=log_data["status_code"],
+#             process_time_ms=log_data["process_time_ms"],
+#             user_agent=log_data["user_agent"],
+#             additional_data=log_data.get("additional_data")
+#         )
+#         db.add(db_log)
+#         await db.commit()
+#         await db.refresh(db_log)
+#         return db_log
+#     except Exception as e:
+#         await db.rollback()
+#         raise e
     
 async def get_user_by_id(db: AsyncSession, user_id: str):
     result = await db.execute(select(User).where(User.id == user_id))
