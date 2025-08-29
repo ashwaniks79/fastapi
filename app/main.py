@@ -16,6 +16,7 @@ import smtplib
 import uuid
 import logging
 import random
+from app.database import engine
 from app.routes import payment, webhook
 import traceback
 # from app.odoo_connector import get_odoo_connection
@@ -226,17 +227,23 @@ async def log_requests(request: Request, call_next):
 #     async with database.engine.begin() as conn:
 #         await conn.run_sync(models.Base.metadata.create_all)
 #         await conn.run_sync(RequestLog.metadata.create_all)
+
+
 @app.on_event("startup")
 async def on_startup():
     """
-    Universal solution:
-    - In production, Alembic migrations will be applied 
-      (via: docker-compose exec web alembic upgrade head)
-    - In local/dev environments, if migrations are not applied, 
-      the tables will be auto-created so the app won’t crash
+    Startup event:
+    - Do NOT auto-create tables
+    - Always rely on Alembic migrations
+    - Only check DB connectivity
     """
-    async with database.engine.begin() as conn:
-        await conn.run_sync(models.Base.metadata.create_all) 
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(lambda conn: None)  # just connection test
+        print("✅ Database connection successful")
+    except Exception as e:
+        print("❌ Database connection failed:", e)
+        raise
 #register API's
 @app.post("/register", response_model=schemas.UnifiedLoginResponse)
 async def register(
@@ -282,13 +289,15 @@ async def register(
             "last_name": new_user.last_name,
             "email": new_user.email,
             "plain_password": plain_password,  #  must match Odoo expected key
-        }
-       
+            "plan_type": getattr(new_user, "subscription_plan", "free") or "free"
+    }
+    
         partner_id = create_odoo_user(odoo_user_data)
-        new_user.partner_id = partner_id  # Optional if you track Odoo user ID
+        new_user.partner_id = partner_id  # Optional if tumhe Odoo user ID track karna hai
         logger.info(f"[Odoo Sync] User created in Odoo with ID: {partner_id}")
     except Exception as e:
         logger.error(f"[Odoo Sync] Failed: {e}")
+    
 
     #  Step 6: Create free subscription
     subscription_features = {

@@ -38,7 +38,7 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
             metadata = session.get("metadata", {})
             logger.info(f" Metadata: {metadata}")
-
+                                                                   
             user_id = metadata.get("user_id")
             tier = metadata.get("tier")
 
