@@ -25,7 +25,7 @@ def get_odoo_connection():
         print(f"✅ Connected to Odoo DB '{db}' as {login}")
         return odoo
     except Exception as e:
-        raise ConnectionError(f"❌ Failed to connect to Odoo: {e}")
+        raise ConnectionError(f" Failed to connect to Odoo: {e}")
 
 # import odoorpc
 # import os

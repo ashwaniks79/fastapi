@@ -1,6 +1,7 @@
 # app/routes/files.py
 from fastapi import APIRouter, UploadFile, File, Depends, BackgroundTasks, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.database import get_db
 from app.auth import get_current_user
 from app import crud, models
@@ -29,17 +30,20 @@ ALLOWED_CONTENT_TYPES = {
     "image/bmp",
     "image/tiff",
     "image/svg+xml",
+    "image/jfif",
+    "image/avif",
 }
 
 # Allowed by extension (fallback)
 ALLOWED_EXTS = {
     ".pdf", ".txt", ".md", ".json", ".csv",
     ".docx", ".xlsx",
-    ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff", ".svg"
+    ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff", ".svg", ".jfif", ".avif"
 }
 
 MAX_SIZE = 30 * 1024 * 1024  # 30 MB
 PUBLIC_BUCKET = os.getenv("SPACES_PUBLIC", "false").lower() == "true"
+
 
 def _is_allowed(file: UploadFile) -> bool:
     ctype_ok = (file.content_type in ALLOWED_CONTENT_TYPES)

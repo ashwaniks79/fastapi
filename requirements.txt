@@ -39,3 +39,5 @@ tqdm
 openai>=1.0.0
 pillow
 pytesseract
+opencv-python-headless
+numpy

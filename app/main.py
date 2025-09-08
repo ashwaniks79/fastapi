@@ -93,7 +93,7 @@ EMAIL_SENDER = auth.EMAIL_SENDER
 #file types
 COMPANY_LOGO_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".svg", ".jfif"}  # image/*
 REGISTRATION_DOC_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png",".doc",".txt"}
-ADDITIONAL_FILES_EXTENSIONS = {".pdf", ".doc", ".docx", ".xlsx", ".jpg", ".jpeg",".png"}
+ADDITIONAL_FILES_EXTENSIONS = {".pdf", ".doc", ".docx", ".xlsx", ".jpg", ".jpeg",".png",".txt"}
 #allowed files
 def allowed_file(filename: str, allowed_extensions: set) -> bool:
     ext = os.path.splitext(filename.lower())[1]
@@ -506,14 +506,14 @@ async def unified_login(
     data: schemas.LoginRequest = Body(...),
     db: AsyncSession = Depends(get_db)
 ):
+    # 🔹 Admin login
     result = await db.execute(
-    select(User).where(User.email == data.email, User.role == "admin")
-)
+        select(User).where(User.email == data.email, User.role == "admin")
+    )
     admin_user = result.scalar_one_or_none()
     if admin_user and await verify_password(data.password, admin_user.hashed_password):
         access_token = create_access_token(data={"sub": admin_user.email, "role": "admin"})
         refresh_token = create_refresh_token(data={"sub": admin_user.email, "role": "admin"})  
-        # Example: background_tasks.add_task(log_login_attempt, admin_user.email, True)
         admin_user.access_token = access_token
         await db.commit()
         await db.refresh(admin_user)
@@ -526,19 +526,30 @@ async def unified_login(
             "message": "Login successful as admin",
             "user": schemas.UserOut.model_validate(admin_user, from_attributes=True)
         }
+
+    # 🔹 Normal user login
     result = await db.execute(select(User).where(User.email == data.email))
     user = result.scalar_one_or_none()
-    # if not user or not await verify_password(data.password, user.hashed_password):
-    #     # Example: background_tasks.add_task(log_login_attempt, data.email, False)
-    #     raise HTTPException(status_code=401, detail="Invalid credentials")
-    if not user or not await verify_password(data.password, user.hashed_password):
-        raise HTTPException(status_code=401, detail="Invalid credentials or email not verified")
+
+    # Pehle user exist karta hai ya nahi check karo
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    # OTP verification enforce karo
+    if not user.is_verified:
+        raise HTTPException(status_code=403, detail="Please verify OTP before logging in.")
+
+    # Password validate karo
+    if not await verify_password(data.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    # Tokens generate karo
     access_token = create_access_token(data={"sub": user.email, "role": user.role})
     refresh_token = create_refresh_token(data={"sub": user.email, "role": user.role})  
-    # Example: background_tasks.add_task(log_login_attempt, user.email, True)
     user.access_token = access_token
     await db.commit()
     await db.refresh(user)
+
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,  
@@ -548,6 +559,7 @@ async def unified_login(
         "message": f"Login successful as {user.role}",
         "user": schemas.UserOut.model_validate(user, from_attributes=True)
     }
+
 ####refresh token
 @app.post("/refresh-token")
 async def refresh_token(
@@ -701,7 +713,7 @@ async def create_company_information(
     address_country: str = Form(...),
     terms_accepted: bool = Form(...),
     company_logo: Optional[UploadFile] = File(None),
-    registration_doc: Optional[UploadFile] = File(None),  # 👈 update ke liye optional kar diya
+    registration_doc: Optional[UploadFile] = File(None),  # 👈optional for update
     additional_files: Optional[List[UploadFile]] = File(None),
     db: AsyncSession = Depends(get_db)
 ):
@@ -786,6 +798,7 @@ async def create_company_information(
 
         if existing_info:
             # 🔄 Update logic
+            existing_info.company_name = user.company_name or existing_info.company_name
             existing_info.business_reg_number = business_reg_number
             existing_info.industry_type = industry_type
             existing_info.other_industry = other_industry
@@ -800,11 +813,22 @@ async def create_company_information(
             existing_info.address_country = address_country
             existing_info.terms_accepted = terms_accepted
 
-            if company_logo_url:
-                existing_info.company_logo_path = company_logo_url
-            if registration_doc_url:
-                existing_info.registration_doc_path = registration_doc_url
-            if additional_files_urls:
+            # if company_logo_url:
+            #     existing_info.company_logo_path = company_logo_url
+            # if registration_doc_url:
+            #     existing_info.registration_doc_path = registration_doc_url
+            # if additional_files_urls:
+            #     existing_info.additional_files_paths = additional_files_urls
+            if company_logo_url is not None:
+                existing_info.company_logo_path = company_logo_url or existing_info.company_logo_path
+
+            # Registration doc only update if new file is uploaded
+            if registration_doc_url is not None:
+                existing_info.registration_doc_path = registration_doc_url or existing_info.registration_doc_path
+
+            # Additional files: decide append vs replace
+            if additional_files_urls is not None and len(additional_files_urls) > 0:
+                # If you want to REPLACE
                 existing_info.additional_files_paths = additional_files_urls
 
             await db.commit()

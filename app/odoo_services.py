@@ -6,7 +6,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 def _find_group_id(odoo, xml_id=None, name=None):
-    """Group ID safely lao; xml_id fail ho to name se dhundo."""
+    """Fetch the Group ID safely; if xml_id fails, then search by name."""
     gid = None
     if xml_id:
         try:

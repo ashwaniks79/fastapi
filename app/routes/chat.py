@@ -40,14 +40,19 @@ async def chat(
     if await check_usage_limit(current_user, "ai_queries", db):
         raise HTTPException(403, detail="AI query limit reached.")
 
-    # Embed query (blocking call offloaded)
+    # ✅ Step 1: Check if user has uploaded any docs
+    has_docs = await crud.user_has_documents(db, current_user.id)
+    if not has_docs:
+        return {"answer": "Please upload files before asking questions.", "sources": []}
+
+    # ✅ Step 2: Embed query
     def _embed(q):
         resp = client.embeddings.create(model=EMBED_MODEL, input=q)
         return resp.data[0].embedding
 
     q_emb = await run_in_threadpool(_embed, query)
 
-    # Search in vector DB for relevant documents for this user
+    # ✅ Step 3: Query vector DB for uploaded docs
     where = {"user_id": current_user.id}
     res = await query_vectors(q_emb, top_k=6, where=where)
 
@@ -66,20 +71,16 @@ async def chat(
             source_info = {
                 "document_id": md.get("document_id"),
                 "chunk_index": md.get("chunk_index"),
-                "url": md.get("url"),  # if stored in crud.create_document
+                "url": md.get("url"),
             }
-
         elif isinstance(md, list):
-            # flatten possible list of dicts or strings
             parts = []
             for item in md:
-                if isinstance(item, dict):
-                    if item.get("text_excerpt"):
-                        parts.append(item["text_excerpt"])
+                if isinstance(item, dict) and item.get("text_excerpt"):
+                    parts.append(item["text_excerpt"])
                 elif isinstance(item, str):
                     parts.append(item)
             excerpt = " ".join(parts)
-
         else:
             excerpt = str(md) if md is not None else None
 
@@ -92,25 +93,34 @@ async def chat(
             docs.append(excerpt)
             sources.append(source_info)
 
-    # Join docs for context (limit ~6000 chars for token safety)
+    # ✅ Step 4: Build context
     context = "\n\n".join(docs)[:6000]
 
-    if not context:
-        return {"answer": "No relevant information found in your uploaded documents.", "sources": []}
+    # ✅ Step 5: Build prompt
+    if context:
+        # If query is related to uploaded docs → professional, accurate, context-based
+        prompt = (
+            f"Use ONLY the following document excerpts to answer the question.\n\n"
+            f"Context:\n{context}\n\n"
+            f"Question: {query}\n\n"
+            "Answer clearly and directly based ONLY on the context. "
+            "Do not add extra information or explanations. "
+            "Provide a professional response."
+        )
+    else:
+        # If query is unrelated → simple professional reply
+        prompt = (
+            f"Question: {query}\n\n"
+            "Answer in a professional and concise way. "
+            "Do not add extra explanations."
+        )
 
-    prompt = (
-        "You are a helpful assistant. Use the following excerpts from the user's uploaded documents "
-        "to answer their question. Cite which excerpts you used in your answer.\n\n"
-        f"Context:\n{context}\n\n"
-        f"Question: {query}\n\n"
-        "Answer concisely, clearly, and reference the sources."
-    )
-
+    # ✅ Step 6: Chat with GPT
     def _chat(p):
         resp = client.chat.completions.create(
             model=LLM_MODEL,
             messages=[
-                {"role": "system", "content": "You are an assistant that answers based on user-provided documents."},
+                {"role": "system", "content": "You are an assistant that answers based on user-provided documents or general queries professionally."},
                 {"role": "user", "content": p}
             ],
             max_tokens=800
@@ -119,7 +129,7 @@ async def chat(
 
     answer = await run_in_threadpool(_chat, prompt)
 
-    # Increment usage counter for user queries
+    # ✅ Step 7: Increment usage counter
     await crud.increment_queries_counter(db, current_user.id, by=1)
 
-    return {"answer": answer, "sources": sources}
+    return {"answer": answer, "sources": sources if context else []}
