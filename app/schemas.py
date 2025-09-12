@@ -12,8 +12,8 @@ import re
 
 
 class UserCreate(BaseModel):
-    first_name: constr(min_length=4)
-    last_name: constr(min_length=4)
+    first_name: constr(min_length=1)
+    last_name: constr(min_length=1)
     username: constr(min_length=4)
     email: EmailStr
     password: constr(min_length=7)
@@ -57,6 +57,35 @@ class UserOut(BaseModel):
 
     class Config:
         orm_mode = True
+
+class PendingUserCreate(BaseModel):
+    first_name: str
+    last_name: str
+    username: str
+    email: EmailStr
+    password: str
+    company_name: str
+    phone_number: str
+    country: str
+    timezone: str
+    subscription_plan: str = "free"
+
+class PendingUserOut(BaseModel):
+    id: str
+    email: EmailStr
+    username: str
+    first_name: Optional[str]
+    last_name: Optional[str]
+    company_name: Optional[str]
+    phone_number: Optional[str]
+    country: Optional[str]
+    timezone: Optional[str]
+    subscription_plan: Optional[str] = "free"
+    created_at: datetime
+
+    class Config:
+        orm_mode = True
+
 
 class OTPResponse(BaseModel):
     otp_verified: bool
@@ -131,8 +160,8 @@ class CreateUserByAdmin(BaseModel):
     username: constr(min_length=4)
     email: EmailStr
     password: constr(min_length=7)
-    first_name: constr(min_length=4)
-    last_name: constr(min_length=4)
+    first_name: constr(min_length=1)
+    last_name: constr(min_length=1)
     company_name: constr(min_length=2)
     phone_number: str
     country: constr(min_length=3)
@@ -155,8 +184,8 @@ class CreateUserByAdmin(BaseModel):
 
 class UnifiedUserUpdate(BaseModel):
     id: Optional[str] = None  # Added ID field for frontend compatibility
-    first_name: Optional[constr(min_length=4)] = None
-    last_name: Optional[constr(min_length=4)] = None
+    first_name: Optional[constr(min_length=1)] = None
+    last_name: Optional[constr(min_length=1)] = None
     username: Optional[constr(min_length=4)] = None
     email: Optional[EmailStr] = None
     company_name: Optional[constr(min_length=2)] = None
@@ -198,6 +227,7 @@ class OTPCreate(BaseModel):
 class OTPVerify(BaseModel):
     email: EmailStr
     otp: str
+    pending_id: Optional[str] = None
 
 class FileData(BaseModel):
     filename: str

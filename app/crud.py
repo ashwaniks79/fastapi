@@ -137,7 +137,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from . import models, schemas
 from .auth import get_password_hash
-from typing import Union
+from typing import Union,Optional
 from app.odoo_services import  create_odoo_user
 from datetime import datetime, timedelta
 import logging
@@ -147,13 +147,24 @@ from .models import User
 from sqlalchemy import select
 from .models import Document, DocumentChunk, Subscription
 from app.utils import usage_checker
-
+from sqlalchemy.exc import IntegrityError
 logger = logging.getLogger(__name__)
 
-async def create_user(db: AsyncSession, user: Union[schemas.UserCreate, schemas.CreateUserByAdmin], role: str = "customer", user_id: str = None):
+async def create_user(
+    db: AsyncSession,
+    user: Union[schemas.UserCreate, schemas.CreateUserByAdmin],
+    role: str = "customer",
+    user_id: Optional[str] = None,
+):
+    """
+    Create a real User record (used after OTP verification).
+    This function *hashes* the plain password provided in user.password.
+    It marks the user as verified (is_verified/otp_verified) because this function
+    is called only after OTP verification.
+    """
     hashed_password = await get_password_hash(user.password)
     db_user = models.User(
-        id=user_id, 
+        id=user_id,
         username=user.username,
         email=user.email,
         hashed_password=hashed_password,
@@ -163,19 +174,75 @@ async def create_user(db: AsyncSession, user: Union[schemas.UserCreate, schemas.
         phone_number=user.phone_number,
         country=user.country,
         timezone=user.timezone,
-        subscription_plan=user.subscription_plan,
+        subscription_plan=user.subscription_plan or "free",
         role=role,
+        is_verified=True,
+        otp_verified=True,
+        otp_attempts=0,
         trial_start_date=datetime.utcnow(),
         trial_expiry_date=datetime.utcnow() + timedelta(days=5),
     )
     db.add(db_user)
-    await db.commit()
-    await db.refresh(db_user)
+    try:
+        await db.commit()
+        await db.refresh(db_user)
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(f"create_user IntegrityError: {e}")
+        raise
     return db_user
+
 
 async def get_user_by_id(db: AsyncSession, user_id: str):
     result = await db.execute(select(models.User).where(models.User.id == user_id))
     return result.scalars().first()
+
+
+async def get_user_by_email(db: AsyncSession, email: str):
+    result = await db.execute(select(models.User).where(models.User.email == email))
+    return result.scalars().first()
+
+
+# -------------------------
+# PENDING USER CRUD (for OTP flow)
+# -------------------------
+async def create_pending_user(db: AsyncSession, pending_data: dict):
+    """
+    pending_data: dict matching PendingUser columns:
+    id, email, username, first_name, last_name, company_name, phone_number,
+    country, timezone, subscription_plan, password_enc, otp_code, otp_expires_at, otp_attempts
+    """
+    pu = models.PendingUser(**pending_data)
+    db.add(pu)
+    try:
+        await db.commit()
+        await db.refresh(pu)
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(f"create_pending_user IntegrityError: {e}")
+        raise
+    return pu
+
+
+async def get_pending_user_by_email(db: AsyncSession, email: str):
+    result = await db.execute(select(models.PendingUser).where(models.PendingUser.email == email))
+    return result.scalars().first()
+
+
+async def update_pending_user(db: AsyncSession, pending_user: models.PendingUser, **kwargs):
+    for k, v in kwargs.items():
+        setattr(pending_user, k, v)
+    db.add(pending_user)
+    await db.commit()
+    await db.refresh(pending_user)
+    return pending_user
+
+
+async def delete_pending_user(db: AsyncSession, pending_user: models.PendingUser):
+    await db.delete(pending_user)
+    await db.commit()
+
+
 
 async def create_document(
     db: AsyncSession,

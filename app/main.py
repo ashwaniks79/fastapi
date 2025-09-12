@@ -61,7 +61,7 @@ from fastapi.concurrency import run_in_threadpool
 from app.routes import dashboard, projects
 from app.routes import files as files_router, chat as chat_router, agent as agent_router
 from app.services.storage import upload_file_to_spaces
-
+from app.security import encrypt_password, decrypt_password 
 
 # Load environment variables
 load_dotenv()
@@ -99,44 +99,6 @@ def allowed_file(filename: str, allowed_extensions: set) -> bool:
     ext = os.path.splitext(filename.lower())[1]
     return ext in allowed_extensions
 
-######upload route for digital ocean###########
-# # Create boto3 client for DigitalOcean Spaces
-# session = boto3.session.Session()
-# client = session.client(
-#     's3',
-#     region_name=os.getenv("SPACES_REGION"),
-#     endpoint_url=os.getenv("SPACES_ENDPOINT"),
-#     aws_access_key_id=os.getenv("SPACES_KEY"),
-#     aws_secret_access_key=os.getenv("SPACES_SECRET")
-# )
-
-# # # Upload file to Spaces
-# async def upload_file_to_spaces(file_obj, filename: str, content_type: str):
-#     bucket = os.getenv("SPACES_BUCKET")
-    
-#     await run_in_threadpool(
-#         client.upload_fileobj,
-#         Fileobj=io.BytesIO(file_obj),
-#         Bucket=bucket,
-#         Key=filename,
-#         ExtraArgs={"ACL": "public-read", "ContentType": content_type}
-#     )
-
-#     file_url = f"{os.getenv('SPACES_ENDPOINT')}/{bucket}/{filename}"
-#     return file_url
-
-# API endpoint for file upload
-# @app.post("/upload")
-# async def upload_file(file: UploadFile = File(...)):
-#     if not allowed_file(file.filename):
-#         return {"error": "Unsupported file type"}
-
-#     try:
-#         file_url = await upload_file_to_spaces(file.file, file.filename, file.content_type)
-#         return {"message": "File uploaded", "url": file_url}
-#     except Exception as e:
-#         logger.error(f"Upload failed: {e}")
-#         return {"error": "File upload failed"}
 #app middleware log requests 
 
 logging.basicConfig(
@@ -149,7 +111,7 @@ logger = logging.getLogger(__name__)
 #CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://170.64.163.105:3001"], 
+    allow_origins=["http://localhost:3000", "http://170.64.163.105:3001","https://dashboard.eredoxpro.com"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -245,94 +207,63 @@ async def on_startup():
         print("❌ Database connection failed:", e)
         raise
 #register API's
-@app.post("/register", response_model=schemas.UnifiedLoginResponse)
+@app.post("/register")
 async def register(
     user: schemas.UserCreate,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(database.get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    existing_user = await auth.get_user_by_email(db, user.email)
+    # 1) If a verified user already exists -> block
+    existing_user = await crud.get_user_by_email(db, user.email)
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    #  Generate unique 16-char user ID
+    # 2) If there's an existing pending registration -> tell them to verify/resend
+    pending = await crud.get_pending_user_by_email(db, user.email)
+    if pending:
+        # If existing pending and not expired -> instruct to verify or resend
+        if pending.otp_expires_at and datetime.now(timezone.utc) < pending.otp_expires_at:
+            raise HTTPException(status_code=400, detail="OTP already sent for this email. Please verify or resend OTP.")
+        else:
+            # expired pending -> delete and allow new registration
+            await crud.delete_pending_user(db, pending)
+
+    # 3) Create pending user record (encrypted password)
     user_id = secrets.token_hex(8)
-
-    #  Step 1: store plain password separately
-    plain_password = user.password
-
-    #  Step 2: hash password before saving
-    hashed_password = auth.get_password_hash(plain_password)
-
-    #  Step 3: Create new user with hashed password
-    user_data = user.model_dump()
-    user_data["hashed_password"] = hashed_password
-    new_user = await crud.create_user(
-        db, schemas.UserCreate(**user_data), role="customer", user_id=user_id
-    )
-
-    #  Step 4: OTP setup
     otp = str(random.randint(1000, 9999))
     otp_expires = datetime.now(timezone.utc) + timedelta(minutes=int(auth.OTP_EXPIRE_MINUTES))
-    new_user.otp_code = otp
-    new_user.otp_verified = False
-    new_user.otp_attempts = 0
-    new_user.otp_expires_at = otp_expires
+    password_enc = encrypt_password(user.password)
 
-    await db.commit()
-    await db.refresh(new_user)
+    pending_data = {
+        "id": user_id,
+        "email": user.email,
+        "username": user.username,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "company_name": user.company_name,
+        "phone_number": user.phone_number,
+        "country": user.country,
+        "timezone": user.timezone,
+        "subscription_plan": user.subscription_plan or "free",
+        "password_enc": password_enc,
+        "otp_code": otp,
+        "otp_expires_at": otp_expires,
+        "otp_attempts": 0
+    }
 
-    #  Step 5: Odoo user sync
     try:
-        odoo_user_data = {
-            "first_name": new_user.first_name,
-            "last_name": new_user.last_name,
-            "email": new_user.email,
-            "plain_password": plain_password,  #  must match Odoo expected key
-            "plan_type": getattr(new_user, "subscription_plan", "free") or "free"
-    }
-    
-        partner_id = create_odoo_user(odoo_user_data)
-        new_user.partner_id = partner_id  # Optional if tumhe Odoo user ID track karna hai
-        logger.info(f"[Odoo Sync] User created in Odoo with ID: {partner_id}")
+        await crud.create_pending_user(db, pending_data)
     except Exception as e:
-        logger.error(f"[Odoo Sync] Failed: {e}")
-    
+        logger.error(f"Failed to create pending user: {e}")
+        raise HTTPException(status_code=500, detail="Failed to register. Try again later.")
 
-    #  Step 6: Create free subscription
-    subscription_features = {
-        "free": ['Access to 3 Basic Agents', 'Limited Usage of Tools'],
-        "silver": ['Access to All Standard Agents', 'Limited Media/Marketing Tools'],
-        "gold": ['Full Access to 50+ Agents', 'Includes Document, Vision, Marketing Tools']
-    }
-    features = subscription_features.get(new_user.subscription_plan.lower(), [])
-
-    new_subscription = Subscription(
-        subscription_id=new_user.id,
-        subscriptions_plan=new_user.subscription_plan,
-        features_enabled=features
-    )
-    db.add(new_subscription)
-
-    #  Step 7: Send OTP email
-    background_tasks.add_task(send_otp_email, new_user.email, otp)
-
-    #  Step 8: Auth token creation
-    access_token = auth.create_access_token(data={"sub": new_user.email, "role": new_user.role})
-    refresh_token = auth.create_refresh_token(data={"sub": new_user.email, "role": new_user.role})
-    new_user.access_token = access_token
-
-    await db.commit()
-    await db.refresh(new_user)
+    # send otp async
+    background_tasks.add_task(send_otp_email, user.email, otp)
 
     return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer",
         "status": "true",
-        "role": new_user.role,
-        "message": "Registration successful. OTP sent.",
-        "user": schemas.UserOut.model_validate(new_user, from_attributes=True)
+        "message": "OTP sent. Please verify to complete registration.",
+        "email": user.email
     }
 
 ###sending welcome email after register
@@ -347,7 +278,7 @@ We're excited to have you join our platform! You've taken the first step toward 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━<br><br>
 🔧 <strong>What Happens Next?</strong><br><br>
 To activate your portal, please complete your Company Setup:<br><br>
-👉 <a href="http://170.64.163.105:3001/completeprofile/companyinformationpage?uid={id}">Complete Your Company Setup</a><br><br>
+👉 <a href="https://dashboard.eredoxpro.com/completeprofile/companyinformationpage?uid={id}">Complete Your Company Setup</a><br><br>
 This is where you'll:<br>
 •  Describe your business and upload documents<br>
 •  Select the Managers (modules) you want to enable<br>
@@ -359,7 +290,7 @@ Here's how we keep your portal secure:<br>
 •  We do not share, resell, or transmit your data to any third party<br>
 •  All business data stays within your company instance<br>
 •  When you delete data, it's permanently erased and cannot be recovered<br>
-•  You can review our full <a href=http://170.64.163.105:3001/legal/datasecurity">Data Security & Privacy Commitment</a><br><br>
+•  You can review our full <a href=https://dashboard.eredoxpro.com/legal/datasecurity">Data Security & Privacy Commitment</a><br><br>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━<br><br>
 📄 <strong>User Acknowledgement & Disclaimer</strong><br><br>
 To proceed, please review and accept the following during onboarding:<br>
@@ -369,7 +300,7 @@ To proceed, please review and accept the following during onboarding:<br>
    ◦  Include scams, malicious links, viruses, or trojans<br>
    ◦  Harm the reputation or integrity of Eredox Pty Ltd or its users<br>
 •  You understand that deleted data is not recoverable unless re-submitted<br><br>
-📄 <a href="http://170.64.163.105:3001/legal/termsofuse">Review our Terms of Use & Legal Policy</a><br><br>
+📄 <a href="https://dashboard.eredoxpro.com/legal/termsofuse">Review our Terms of Use & Legal Policy</a><br><br>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━<br><br>
 💬 <strong>Need Help?</strong><br>
 Contact us anytime or simply reply to this email. We're here to support you.<br><br>
@@ -425,80 +356,153 @@ async def send_otp_email(email: str, otp: str):
 
     return {"message": f"OTP sent to {email}"}
 ##verify otp 
-@app.post("/verify-otp", response_model=schemas.OTPResponse)
+@app.post("/verify-otp", response_model=schemas.UnifiedLoginResponse)
 async def verify_otp(
     otp_data: schemas.OTPVerify,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    authorization: str = Header(...),
+    authorization: str | None = Header(None),  # optional
 ):
-    
-    result = await db.execute(select(models.User).where(models.User.email == otp_data.email))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    if user.otp_verified:
-        raise HTTPException(status_code=400, detail="OTP already verified")
-    if user.otp_attempts + 1 >= auth.OTP_ATTEMPTS_LIMIT:
-        await db.delete(user)
-        await db.commit()
+    pending = await crud.get_pending_user_by_email(db, otp_data.email)
+    if not pending:
+        # explicit message as you asked
+        raise HTTPException(status_code=404, detail="Your account is not registered or OTP not requested.")
+
+    # attempts check
+    if (pending.otp_attempts or 0) + 1 >= int(auth.OTP_ATTEMPTS_LIMIT):
+        await crud.delete_pending_user(db, pending)
         raise HTTPException(status_code=400, detail="Email verification attempt exceeded. Please register again.")
-    if user.otp_expires_at and datetime.now(timezone.utc) > user.otp_expires_at.astimezone():
-        raise HTTPException(status_code=400, detail="OTP has expired. Please request a new OTP.")
-    if user.otp_code != otp_data.otp:
-        user.otp_attempts += 1
-        await db.commit()
-        await db.refresh(user)
-        attempts_left = auth.OTP_ATTEMPTS_LIMIT - user.otp_attempts
+
+    # expiry check
+    if pending.otp_expires_at and datetime.now(timezone.utc) > pending.otp_expires_at:
+        # expired
+        await crud.delete_pending_user(db, pending)
+        raise HTTPException(status_code=400, detail="OTP has expired. Please register again.")
+
+    # wrong OTP
+    if pending.otp_code != otp_data.otp:
+        pending.otp_attempts = (pending.otp_attempts or 0) + 1
+        await crud.update_pending_user(db, pending, otp_attempts=pending.otp_attempts)
+        attempts_left = int(auth.OTP_ATTEMPTS_LIMIT) - pending.otp_attempts
         raise HTTPException(
             status_code=400,
             detail=f"Invalid OTP. {attempts_left} attempts remaining."
         )
-    # user.otp_verified = True
-    # user.otp_code = None
-    # user.is_verified = True
-    await db.execute(update(User)
-        .where(User.email == otp_data.email)
-            .values(otp_verified=True, is_verified=True))
 
+    # ✅ OTP correct -> create real User and related resources
+    try:
+        plain_password = decrypt_password(pending.password_enc)
+    except Exception as e:
+        logger.error(f"Failed to decrypt pending password: {e}")
+        await crud.delete_pending_user(db, pending)
+        raise HTTPException(status_code=500, detail="Internal error while processing registration")
+
+    # Create user via crud.create_user (it will hash the password)
+    user_payload = schemas.UserCreate(
+        username=pending.username,
+        email=pending.email,
+        password=plain_password,
+        first_name=pending.first_name,
+        last_name=pending.last_name,
+        company_name=pending.company_name,
+        phone_number=pending.phone_number,
+        country=pending.country,
+        timezone=pending.timezone,
+        subscription_plan=pending.subscription_plan or "free",
+    )
+
+    try:
+        new_user = await crud.create_user(db, user_payload, role="customer", user_id=pending.id)
+    except Exception as e:
+        logger.error(f"Failed to create user after OTP verification: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create user. Try again later.")
+
+    # Odoo sync (only now)
+    try:
+        odoo_user_data = {
+            "first_name": new_user.first_name,
+            "last_name": new_user.last_name,
+            "email": new_user.email,
+            "plain_password": plain_password,
+            "plan_type": getattr(new_user, "subscription_plan", "free") or "free"
+        }
+        partner_id = create_odoo_user(odoo_user_data)
+        # If you store partner_id in user
+        new_user.partner_id = partner_id
+    except Exception as e:
+        logger.error(f"[Odoo Sync] Failed: {e}")
+
+    # Create subscription (same logic as before)
+    subscription_features = {
+        "free": ['Access to 3 Basic Agents', 'Limited Usage of Tools'],
+        "silver": ['Access to All Standard Agents', 'Limited Media/Marketing Tools'],
+        "gold": ['Full Access to 50+ Agents', 'Includes Document, Vision, Marketing Tools']
+    }
+    features = subscription_features.get(new_user.subscription_plan.lower(), [])
+    new_subscription = Subscription(
+        subscription_id=new_user.id,
+        subscriptions_plan=new_user.subscription_plan,
+        features_enabled=features
+    )
+    db.add(new_subscription)
+
+    # Generate tokens and attach
+    access_token = auth.create_access_token(data={"sub": new_user.email, "role": new_user.role})
+    refresh_token = auth.create_refresh_token(data={"sub": new_user.email, "role": new_user.role})
+    new_user.access_token = access_token
+
+    # Final commit (user update, subscription, partner_id, access_token)
     await db.commit()
-    await db.refresh(user)
-    # saved_token = user.access_token
-    # Example: background_tasks.add_task(some_audit_log, user.email, "otp_verified")
-    # background_tasks.add_task(send_welcome_email, user.email, user.first_name)
-    background_tasks.add_task(send_welcome_email, user.email, user.first_name, user, user.id)
-    return {"otp_verified": True, "otp_attempts": user.otp_attempts, "message": f"Welcome email sent to {user.first_name}"}
-    # return {"otp_verified": True, "otp_attempts": user.otp_attempts}
-##resend otp email
-@app.post("/resend-otp", response_model=schemas.OTPResponse)
+    await db.refresh(new_user)
+
+    # Remove pending record now that real user exists
+    await crud.delete_pending_user(db, pending)
+
+    # Send welcome email in background
+    background_tasks.add_task(send_welcome_email, new_user.email, new_user.first_name, new_user, new_user.id)
+
+    # Return unified login response so client can use tokens
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "status": "true",
+        "role": new_user.role,
+        "message": "Registration successful and OTP verified.",
+        "user": schemas.UserOut.model_validate(new_user, from_attributes=True)
+    }
+
+
+# ---------------------------
+# RESEND OTP: operate on pending
+# ---------------------------
+@app.post("/resend-otp")
 async def resend_otp(
     background_tasks: BackgroundTasks,
     email: str = Body(..., embed=True),
     db: AsyncSession = Depends(get_db)
 ):
-    result = await db.execute(select(models.User).where(models.User.email == email))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    if user.otp_verified:
-        raise HTTPException(status_code=400, detail="OTP already verified")
-    if user.otp_attempts >= auth.OTP_ATTEMPTS_LIMIT:
-        wait_time = auth.OTP_EXPIRE_MINUTES
-        raise HTTPException(
-            status_code=400,
-            detail=f"Too many attempts. Please wait {wait_time} minutes before requesting a new OTP."
-        )
-    otp = str(random.randint(1000, 9999))  
-    otp_expires = datetime.now(timezone.utc) + timedelta(minutes=int(auth.OTP_EXPIRE_MINUTES))
-    user.otp_code = otp
-    user.otp_attempts = 0
-    user.otp_expires_at = otp_expires
-    await db.commit()
-    await db.refresh(user)
-    background_tasks.add_task(send_otp_email, user.email, otp)
-    return {"otp_verified": user.otp_verified, "otp_attempts": user.otp_attempts}
+    # If a verified user exists -> don't resend
+    existing_user = await crud.get_user_by_email(db, email)
+    if existing_user:
+        raise HTTPException(status_code=400, detail="User already exists. Please login.")
 
-##login endpoint
+    pending = await crud.get_pending_user_by_email(db, email)
+    if not pending:
+        raise HTTPException(status_code=404, detail="No pending registration found. Please register first.")
+
+    if pending.otp_attempts >= int(auth.OTP_ATTEMPTS_LIMIT):
+        # too many attempts -> delete pending and force re-register
+        await crud.delete_pending_user(db, pending)
+        raise HTTPException(status_code=400, detail="Too many attempts. Please register again.")
+
+    # regenerate otp & reset attempts & extend expiry
+    otp = str(random.randint(1000, 9999))
+    otp_expires = datetime.now(timezone.utc) + timedelta(minutes=int(auth.OTP_EXPIRE_MINUTES))
+    await crud.update_pending_user(db, pending, otp_code=otp, otp_attempts=0, otp_expires_at=otp_expires)
+
+    background_tasks.add_task(send_otp_email, email, otp)
+    return {"otp_verified": False, "otp_attempts": 0, "message": "OTP resent."}
 
 @app.post("/login", response_model=schemas.UnifiedLoginResponse)
 async def unified_login(
@@ -1164,7 +1168,7 @@ async def send_password_link_email(
         raise HTTPException(status_code=404, detail="User not found")
 
     # Use static frontend reset page + user_id
-    reset_link = f"http://170.64.163.105:3001/forget-password?uid={user.id}"
+    reset_link = f"https://dashboard.eredoxpro.com/forget-password?uid={user.id}"
     background_tasks.add_task(send_forget_password_link_email, user.email, user.first_name, reset_link)
 
     return {"message": f"Password reset link sent to {email}"}
